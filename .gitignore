@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.venv/
+*.db
+*.db-wal
+*.db-shm
+.DS_Store
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+.engram-debate/
