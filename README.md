@@ -88,6 +88,15 @@ At 10,000 memories, Engram still costs ~300 tokens per retrieval. MEMORY.md woul
 
 ## Quick Start
 
+### Prerequisites
+
+- [uv](https://github.com/astral-sh/uv) (Python package manager)
+  ```bash
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+  ```
+- Python 3.11+ (uv will auto-install if needed)
+- No Docker, no Postgres, no external services required
+
 ### Install
 
 ```bash
@@ -96,47 +105,58 @@ cd Engram
 uv sync --extra dev --extra mcp
 ```
 
-### CLI
+That's it. The database (`~/.engram/engram.db`) is created automatically on first use.
 
-```bash
-# Remember something
-engram add "Money values must use integer cents" --kind constraint --project payments --path-scope "payments/*"
+### Connect to Claude Code
 
-# Search memories
-engram search "integer cents"
-
-# Get archive candidates
-engram candidates
-
-# Run health checks
-engram health
-
-# View stats
-engram stats
-
-# Brain status overview
-engram dashboard
-```
-
-### MCP Server (Claude Code integration)
-
-Add to `~/.claude/.mcp.json`:
+Add to `~/.claude/.mcp.json` (create the file if it doesn't exist):
 
 ```json
 {
   "mcpServers": {
     "engram": {
       "command": "uv",
-      "args": ["--directory", "/path/to/Engram", "run", "engram-server"],
-      "env": {
-        "ENGRAM_DB": "~/.engram/engram.db"
-      }
+      "args": ["--directory", "/absolute/path/to/Engram", "run", "engram-server"]
     }
   }
 }
 ```
 
-Restart Claude Code. Twelve tools become available:
+Replace `/absolute/path/to/Engram` with the actual path where you cloned the repo.
+
+Restart Claude Code. Twelve tools become available in every project.
+
+### Verify it works
+
+```bash
+# Add a test memory
+engram add "This is a test" --kind fact
+
+# Search for it
+engram search "test"
+
+# See the brain overview
+engram dashboard
+
+# Run health checks
+engram health
+```
+
+### CLI Commands
+
+```bash
+engram add          # Remember something (--kind constraint/decision/procedure/fact/guardrail)
+engram search       # Search memories (--project, --kind, --json, --limit)
+engram forget       # Soft-delete a memory by ID
+engram candidates   # List archive candidates
+engram stats        # Quick statistics
+engram dashboard    # Full brain status overview
+engram health       # Health checks (missing evidence, orphans)
+```
+
+### MCP Tools (12)
+
+Once connected, Claude Code can call these tools directly:
 
 | Tool | Purpose |
 |------|---------|
