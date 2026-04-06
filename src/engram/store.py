@@ -17,6 +17,15 @@ class MemoryStore:
     def close(self):
         self.conn.close()
 
+    def _log_op(self, op: str, memory_id: str | None = None,
+                kind: str | None = None, project: str | None = None,
+                detail: str | None = None) -> None:
+        self.conn.execute(
+            "INSERT INTO ops_log (op, memory_id, kind, project, ts, detail) VALUES (?,?,?,?,?,?)",
+            (op, memory_id, kind, project,
+             datetime.now(timezone.utc).isoformat(), detail),
+        )
+
     def remember(
         self,
         content: str,
@@ -52,6 +61,10 @@ class MemoryStore:
             summary=summary,
         )
 
+        # Kind-specific soft quality check (only if confidence was default)
+        if confidence == 1.0:
+            mem.confidence = self._apply_kind_rules(mem)
+
         self.conn.execute(
             """INSERT INTO memories
                (id, content, summary, kind, origin, project, path_scope, tags,
@@ -78,8 +91,21 @@ class MemoryStore:
                 0,
             ),
         )
+        self._log_op("remember", mem.id, mem.kind.value, mem.project)
         self.conn.commit()
         return mem
+
+    @staticmethod
+    def _apply_kind_rules(mem: MemoryObject) -> float:
+        """Soft quality check: lower confidence if recommended fields missing."""
+        conf = 1.0
+        if mem.kind == MemoryKind.GUARDRAIL and not mem.evidence_link:
+            conf = min(conf, 0.7)
+        if mem.kind == MemoryKind.CONSTRAINT and not mem.project and not mem.path_scope:
+            conf = min(conf, 0.8)
+        if mem.kind in (MemoryKind.PROCEDURE,) and not mem.path_scope and not mem.project:
+            conf = min(conf, 0.9)
+        return conf
 
     def _find_duplicate(
         self, content: str, project: str | None
@@ -160,7 +186,16 @@ class MemoryStore:
         limit: int = 10,
         budget: str = "normal",
     ) -> list[MemoryObject] | list[dict]:
-        """Retrieve memories matching query with filters and ranking."""
+        """Retrieve memories matching query with filters and ranking.
+
+        Budget levels (token cost):
+          tiny   ~300 tok  — compact cards (claim+kind+scope+trust)
+          normal ~2-5K tok — full memory objects (default)
+          deep   ~5-20K tok — expanded results, higher limit
+        """
+        if budget == "deep":
+            limit = max(limit, 50)
+
         params: list = []
         where_clauses: list[str] = []
 
@@ -209,6 +244,8 @@ class MemoryStore:
 
         results = [self._row_to_memory(row) for row in rows]
         self._touch(results)
+        self._log_op("recall", detail=f"query={query[:50]} results={len(results)}")
+        self.conn.commit()
         if budget == "tiny":
             return [self._to_card(m) for m in results]
         return results
@@ -242,6 +279,8 @@ class MemoryStore:
         rows = self.conn.execute(sql, params + [limit]).fetchall()
         results = [self._row_to_memory(row) for row in rows]
         self._touch(results)
+        self._log_op("recall", detail=f"recent results={len(results)}")
+        self.conn.commit()
         if budget == "tiny":
             return [self._to_card(m) for m in results]
         return results
@@ -272,6 +311,7 @@ class MemoryStore:
             "UPDATE memories SET status = ? WHERE id = ?",
             (MemoryStatus.OBSOLETE.value, memory_id),
         )
+        self._log_op("forget", memory_id)
         self.conn.commit()
 
     def consolidate_candidates(
@@ -356,8 +396,8 @@ created_at: {mem.created_at.isoformat()}
 """
                 (out_dir / f"{mem.id}.md").write_text(md)
 
-    def health(self, *, orphan_age_days: int = 30) -> dict:
-        """Run health checks: missing evidence, orphans."""
+    def health(self, *, orphan_age_days: int = 30, check_stale: bool = False) -> dict:
+        """Run health checks: missing evidence, orphans, stale claims."""
         # Missing evidence: constraint/guardrail without evidence_link
         missing = self.conn.execute(
             """SELECT id, summary, kind FROM memories
@@ -382,12 +422,63 @@ created_at: {mem.created_at.isoformat()}
             {"id": r[0], "summary": r[1], "kind": r[2]} for r in orphans_rows
         ]
 
-        total_issues = len(missing_evidence) + len(orphans)
-        return {
+        result: dict = {
             "missing_evidence": missing_evidence,
             "orphans": orphans,
-            "total_issues": total_issues,
         }
+
+        # Stale claims: newer memory supersedes older similar memory (opt-in)
+        if check_stale:
+            result["stale_claims"] = self._find_stale_claims()
+
+        total = len(missing_evidence) + len(orphans) + len(result.get("stale_claims", []))
+        result["total_issues"] = total
+        return result
+
+    def _find_stale_claims(self) -> list[dict]:
+        """Find memories where a newer memory on same project supersedes an older one."""
+        stale: list[dict] = []
+        rows = self.conn.execute(
+            """SELECT id, content, summary, kind, project, created_at
+               FROM memories WHERE status = 'active' AND project IS NOT NULL
+               ORDER BY created_at ASC"""
+        ).fetchall()
+
+        for i, row in enumerate(rows):
+            old_id, old_content, old_summary, old_kind, old_project, old_ts = row
+            normalized = self._normalize(old_content)
+            words = list(normalized)[:8]
+            if not words:
+                continue
+            fts_query = " OR ".join(words)
+            try:
+                matches = self.conn.execute(
+                    """SELECT m.id, m.content, m.created_at
+                       FROM memories m
+                       JOIN memories_fts fts ON m.rowid = fts.rowid
+                       WHERE memories_fts MATCH ?
+                         AND m.status = 'active'
+                         AND m.project = ?
+                         AND m.id != ?
+                         AND m.created_at > ?
+                       ORDER BY rank LIMIT 3""",
+                    (fts_query, old_project, old_id, old_ts),
+                ).fetchall()
+            except Exception:
+                continue
+
+            for match in matches:
+                sim = self._text_similarity(old_content, match[1])
+                if sim > 0.4:
+                    stale.append({
+                        "old_id": old_id,
+                        "old_content": old_summary,
+                        "new_id": match[0],
+                        "new_content": match[1][:100],
+                        "similarity": round(sim, 2),
+                    })
+                    break  # one match is enough
+        return stale
 
     def micro_index(self) -> str:
         """Generate a compact index for AI agent cold-start (~200 tokens)."""

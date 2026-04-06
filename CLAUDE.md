@@ -7,7 +7,7 @@ AI agent 记忆系统 - 类人脑的持久化记忆，为 coding agent 设计。
 ```
 src/engram/
   model.py      — MemoryObject, MemoryKind, MemoryOrigin, MemoryStatus
-  db.py         — SQLite + FTS5 schema, init_db()
+  db.py         — SQLite + FTS5 schema + ops_log table, init_db()
   store.py      — MemoryStore: remember/recall/forget/consolidate/health/export/stats/micro_index
   proactive.py  — ProactiveRecallEngine: 主动召回 + suppress
   cli.py        — CLI: engram add/search/forget/candidates/stats
@@ -21,7 +21,7 @@ tests/
 - Python 3.11+ / uv
 - SQLite + FTS5 (WAL mode)
 - MCP protocol (FastMCP)
-- pytest (85 tests)
+- pytest (99 tests)
 
 ## 开发规范
 
@@ -55,6 +55,21 @@ tests/
 - SQLite 是运行时真相源，Markdown 是编译/导出层
 - origin 分离防止 AI 编译产物污染人类判断
 
+## 写入质量规则 (kind-specific)
+
+- `guardrail` 无 evidence_link → confidence 降至 0.7
+- `constraint` 无 project 且无 path_scope → confidence 降至 0.8
+- `procedure` 无 project 且无 path_scope → confidence 降至 0.9
+- `fact`/`decision` 无强制字段
+- 用户显式指定 confidence 时不覆盖
+
+## Token 预算 (L0-L3)
+
+- L0 ~200 tokens — `micro_index()` 冷启动定位
+- L1 ~300 tokens — `recall(budget="tiny")` 紧凑卡片
+- L2 ~2-5K tokens — `recall(budget="normal")` 完整对象（默认）
+- L3 ~5-20K tokens — `recall(budget="deep")` 扩展结果 limit=50
+
 ## MCP Tools (10)
 
 ```bash
@@ -67,7 +82,7 @@ uv run engram-server  # 启动 MCP server
 - `consolidate` — 归档候选
 - `proactive` — 文件打开时主动推送 guardrails
 - `suppress` — 临时静音某条 proactive 记忆
-- `health` — 健康检查 (矛盾/缺证据/孤岛)
+- `health` — 健康检查 (缺证据/孤岛/stale claims via check_stale=True)
 - `micro_index` — 紧凑索引 (~200 tokens)
 - `stats` — 统计
 - `export` — 导出 (jsonl/markdown)

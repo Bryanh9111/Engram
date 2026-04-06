@@ -43,6 +43,16 @@ CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
     VALUES ('delete', old.rowid, old.content, old.summary, old.tags);
 END;
 
+CREATE TABLE IF NOT EXISTS ops_log (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    op        TEXT NOT NULL,
+    memory_id TEXT,
+    kind      TEXT,
+    project   TEXT,
+    ts        TEXT NOT NULL,
+    detail    TEXT
+);
+
 CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
     INSERT INTO memories_fts(memories_fts, rowid, content, summary, tags)
     VALUES ('delete', old.rowid, old.content, old.summary, old.tags);

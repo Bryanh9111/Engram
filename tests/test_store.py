@@ -349,6 +349,12 @@ class TestMemoryCards:
         results = populated_store.recall("Redis")
         assert isinstance(results[0], MemoryObject)
 
+    def test_recall_deep_increases_limit(self, populated_store):
+        results = populated_store.recall("", budget="deep")
+        # deep should return all 5 populated memories (default limit would be 10 anyway,
+        # but deep sets limit to max(10, 50) = 50)
+        assert len(results) == 5
+
     def test_tiny_card_is_compact(self, populated_store):
         results = populated_store.recall("integer cents", budget="tiny")
         assert len(results) >= 1
@@ -382,11 +388,48 @@ class TestHealth:
         report = store.health()
         assert report["missing_evidence"] == []
         assert report["orphans"] == []
+        assert report.get("stale_claims", []) == []
 
     def test_health_returns_summary(self, populated_store):
         report = populated_store.health()
         assert "total_issues" in report
         assert isinstance(report["total_issues"], int)
+
+    def test_stale_claims_detects_superseded(self, store):
+        """Older memory superseded by newer similar memory."""
+        store.remember(
+            content="Archetype Phase 1A complete, Big Three product live on Etsy",
+            kind=MemoryKind.FACT,
+            project="archetype",
+        )
+        # Simulate aging the first memory
+        store.conn.execute(
+            "UPDATE memories SET created_at = '2025-01-01T00:00:00+00:00'"
+        )
+        store.conn.commit()
+        store.remember(
+            content="Archetype Phase 1A and Phase 2 complete, Big Three and Love Pattern products live on Etsy",
+            kind=MemoryKind.FACT,
+            project="archetype",
+        )
+        report = store.health(check_stale=True)
+        assert len(report["stale_claims"]) >= 1
+        stale = report["stale_claims"][0]
+        assert "Phase 1A complete" in stale["old_content"]
+
+    def test_stale_claims_off_by_default(self, populated_store):
+        """Stale claims check should not run by default."""
+        report = populated_store.health()
+        assert "stale_claims" not in report or report.get("stale_claims") == []
+
+    def test_stale_claims_same_project_only(self, store):
+        """Cross-project similar content should not be flagged."""
+        store.remember(content="Use UTC everywhere", kind=MemoryKind.CONSTRAINT, project="alpha")
+        store.conn.execute("UPDATE memories SET created_at = '2025-01-01T00:00:00+00:00'")
+        store.conn.commit()
+        store.remember(content="Use UTC everywhere", kind=MemoryKind.CONSTRAINT, project="beta")
+        report = store.health(check_stale=True)
+        assert len(report["stale_claims"]) == 0
 
 
 class TestExport:
@@ -408,3 +451,86 @@ class TestExport:
         assert len(md_files) == 5
         content = md_files[0].read_text()
         assert "---" in content  # YAML frontmatter
+
+
+class TestOpsLog:
+    def test_remember_logs_operation(self, store):
+        store.remember(content="Test fact", kind=MemoryKind.FACT)
+        rows = store.conn.execute("SELECT op, kind FROM ops_log").fetchall()
+        assert len(rows) == 1
+        assert rows[0][0] == "remember"
+        assert rows[0][1] == "fact"
+
+    def test_recall_logs_operation(self, populated_store):
+        populated_store.recall("Redis")
+        rows = populated_store.conn.execute(
+            "SELECT op FROM ops_log WHERE op = 'recall'"
+        ).fetchall()
+        assert len(rows) >= 1
+
+    def test_forget_logs_operation(self, populated_store):
+        results = populated_store.recall("Redis")
+        mem_id = results[0].id
+        populated_store.forget(mem_id)
+        rows = populated_store.conn.execute(
+            "SELECT op, memory_id FROM ops_log WHERE op = 'forget'"
+        ).fetchall()
+        assert len(rows) == 1
+        assert rows[0][1] == mem_id
+
+    def test_ops_log_has_timestamp(self, store):
+        store.remember(content="Test", kind=MemoryKind.FACT)
+        row = store.conn.execute("SELECT ts FROM ops_log").fetchone()
+        assert row[0] is not None
+        assert "2026" in row[0] or "202" in row[0]
+
+
+class TestWriteTemplates:
+    def test_guardrail_without_evidence_lowers_confidence(self, store):
+        mem = store.remember(
+            content="Never do X because of incident Y",
+            kind=MemoryKind.GUARDRAIL,
+            # no evidence_link
+        )
+        assert mem.confidence < 1.0
+
+    def test_guardrail_with_evidence_keeps_confidence(self, store):
+        mem = store.remember(
+            content="Never do X because of incident Y",
+            kind=MemoryKind.GUARDRAIL,
+            evidence_link="https://github.com/org/repo/incidents/1",
+        )
+        assert mem.confidence == 1.0
+
+    def test_constraint_without_scope_lowers_confidence(self, store):
+        mem = store.remember(
+            content="Always use UTC",
+            kind=MemoryKind.CONSTRAINT,
+            # no path_scope, no project
+        )
+        assert mem.confidence < 1.0
+
+    def test_constraint_with_project_keeps_confidence(self, store):
+        mem = store.remember(
+            content="Always use UTC",
+            kind=MemoryKind.CONSTRAINT,
+            project="backend",
+        )
+        assert mem.confidence == 1.0
+
+    def test_fact_without_project_still_ok(self, store):
+        """Facts have no required fields — should not be penalized."""
+        mem = store.remember(
+            content="Python 3.12 is the current version",
+            kind=MemoryKind.FACT,
+        )
+        assert mem.confidence == 1.0
+
+    def test_explicit_confidence_overrides_template(self, store):
+        """User-specified confidence should not be overridden by template."""
+        mem = store.remember(
+            content="Maybe this guardrail",
+            kind=MemoryKind.GUARDRAIL,
+            confidence=0.3,
+        )
+        assert mem.confidence == 0.3

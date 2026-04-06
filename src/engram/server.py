@@ -109,8 +109,8 @@ def _handle_stats(store: MemoryStore) -> dict:
     return store.stats()
 
 
-def _handle_health(store: MemoryStore) -> dict:
-    return store.health()
+def _handle_health(store: MemoryStore, check_stale: bool = False) -> dict:
+    return store.health(check_stale=check_stale)
 
 
 def _handle_export(store: MemoryStore, path: str, fmt: str = "jsonl") -> dict:
@@ -188,9 +188,9 @@ def create_server() -> FastMCP:
         return {"status": "suppressed", "id": memory_id, "duration": duration_seconds}
 
     @mcp.tool()
-    def health() -> dict:
-        """Run health checks: missing evidence, orphans."""
-        return _handle_health(store)
+    def health(check_stale: bool = False) -> dict:
+        """Run health checks: missing evidence, orphans. Set check_stale=True for stale claims detection."""
+        return _handle_health(store, check_stale=check_stale)
 
     @mcp.tool()
     def micro_index() -> str:
