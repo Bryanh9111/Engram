@@ -136,7 +136,7 @@ class MemoryStore:
         for row in rows:
             existing_content = row[1]
             similarity = self._text_similarity(content, existing_content)
-            if similarity > 0.85:
+            if similarity > 0.75:
                 existing_project = row[5]
                 if existing_project == project:
                     return self._row_to_memory(row)
