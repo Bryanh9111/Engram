@@ -104,6 +104,68 @@ def cmd_stats(args, store: MemoryStore) -> None:
             print(f"  {kind}: {count}")
 
 
+def cmd_dashboard(args, store: MemoryStore) -> None:
+    s = store.stats()
+    pinned = store.conn.execute(
+        "SELECT COUNT(*) FROM memories WHERE pinned = 1"
+    ).fetchone()[0]
+    resolved = store.conn.execute(
+        "SELECT COUNT(*) FROM memories WHERE status = 'resolved'"
+    ).fetchone()[0]
+
+    print(f"Engram Brain ({s['active']} active, {resolved} resolved, {pinned} pinned)")
+    print("-" * 55)
+    print()
+
+    # By kind
+    print("By Kind:")
+    for kind, count in sorted(s["by_kind"].items(), key=lambda x: -x[1]):
+        bar = "#" * min(count, 30)
+        print(f"  {kind:12s} {count:3d} {bar}")
+    print()
+
+    # By project
+    print("By Project:")
+    for row in store.conn.execute(
+        "SELECT project, COUNT(*) FROM memories WHERE status IN ('active','resolved') AND project IS NOT NULL GROUP BY project ORDER BY COUNT(*) DESC LIMIT 15"
+    ).fetchall():
+        bar = "#" * min(row[1], 30)
+        print(f"  {row[0]:12s} {row[1]:3d} {bar}")
+    print()
+
+    # Health summary
+    h = store.health()
+    print(f"Health Issues: {h['total_issues']}")
+    if h["missing_evidence"]:
+        print(f"  Missing evidence: {len(h['missing_evidence'])}")
+    if h["orphans"]:
+        print(f"  Orphans: {len(h['orphans'])}")
+    print()
+
+    # Recent ops
+    ops = store.conn.execute(
+        "SELECT op, COUNT(*) FROM ops_log WHERE ts > datetime('now', '-24 hours') GROUP BY op"
+    ).fetchall()
+    if ops:
+        print("Recent Activity (24h):")
+        for op, count in ops:
+            print(f"  {op}: {count}")
+    else:
+        print("Recent Activity (24h): none")
+    print()
+
+    # Hot memories
+    hot = store.conn.execute(
+        """SELECT id, summary, kind, access_count FROM memories
+           WHERE status = 'active' AND access_count > 0
+           ORDER BY access_count DESC LIMIT 5"""
+    ).fetchall()
+    if hot:
+        print("Hot Memories:")
+        for row in hot:
+            print(f"  [{row[2]}] {row[1][:60]} ({row[3]} accesses)")
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="engram", description="Engram memory system")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -139,6 +201,9 @@ def main(argv: list[str] | None = None) -> None:
     # stats
     sub.add_parser("stats", help="Show statistics")
 
+    # dashboard
+    sub.add_parser("dashboard", help="Brain status overview")
+
     args = parser.parse_args(argv)
 
     db_path = _get_db_path()
@@ -147,7 +212,8 @@ def main(argv: list[str] | None = None) -> None:
 
     try:
         {"add": cmd_add, "search": cmd_search, "forget": cmd_forget,
-         "candidates": cmd_candidates, "stats": cmd_stats}[args.command](args, store)
+         "candidates": cmd_candidates, "stats": cmd_stats,
+         "dashboard": cmd_dashboard}[args.command](args, store)
     finally:
         store.close()
 

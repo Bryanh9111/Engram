@@ -96,3 +96,13 @@ class TestCLI:
             env_db=db,
         )
         assert result.returncode == 0
+
+    def test_dashboard(self, tmp_path):
+        db = str(tmp_path / "test.db")
+        run_cli("add", "Test constraint", "--kind", "constraint", "--project", "demo", env_db=db)
+        run_cli("add", "Test fact", "--kind", "fact", env_db=db)
+        result = run_cli("dashboard", env_db=db)
+        assert result.returncode == 0
+        assert "Engram" in result.stdout
+        assert "constraint" in result.stdout
+        assert "fact" in result.stdout

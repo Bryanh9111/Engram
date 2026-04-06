@@ -76,6 +76,7 @@ class TestMemoryObject:
             MemoryStatus.ACTIVE,
             MemoryStatus.SUSPECT,
             MemoryStatus.OBSOLETE,
+            MemoryStatus.RESOLVED,
         }
 
     def test_all_origins_exist(self):

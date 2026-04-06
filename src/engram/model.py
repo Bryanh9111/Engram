@@ -20,6 +20,7 @@ class MemoryStatus(str, Enum):
     ACTIVE = "active"
     SUSPECT = "suspect"
     OBSOLETE = "obsolete"
+    RESOLVED = "resolved"
 
 
 class MemoryOrigin(str, Enum):

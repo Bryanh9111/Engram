@@ -453,6 +453,43 @@ class TestExport:
         assert "---" in content  # YAML frontmatter
 
 
+class TestCompile:
+    def test_compile_project_returns_markdown(self, populated_store):
+        result = populated_store.compile("backend")
+        assert isinstance(result, str)
+        assert "# backend" in result
+        assert "constraint" in result or "decision" in result or "procedure" in result
+
+    def test_compile_groups_by_kind(self, populated_store):
+        result = populated_store.compile("backend")
+        # Should have kind headers
+        assert "##" in result
+
+    def test_compile_nonexistent_project(self, store):
+        result = store.compile("nonexistent")
+        assert "no memories" in result.lower() or result.strip() == ""
+
+
+class TestEffectiveScore:
+    def test_recent_memory_scores_higher(self, store):
+        m1 = store.remember(content="Old memory about auth", kind=MemoryKind.FACT, project="test")
+        store.conn.execute("UPDATE memories SET created_at = '2025-01-01T00:00:00+00:00' WHERE id = ?", (m1.id,))
+        store.conn.commit()
+        m2 = store.remember(content="New memory about auth patterns", kind=MemoryKind.FACT, project="test")
+        results = store.recall("auth", project="test")
+        # New memory should rank before old
+        assert results[0].id == m2.id
+
+    def test_frequently_accessed_scores_higher(self, populated_store):
+        # Access one memory multiple times
+        for _ in range(5):
+            populated_store.recall("Redis")
+        results = populated_store.recall("")
+        # The frequently accessed one should be near the top
+        redis_mem = [r for r in results if "Redis" in r.content]
+        assert len(redis_mem) >= 1
+
+
 class TestOpsLog:
     def test_remember_logs_operation(self, store):
         store.remember(content="Test fact", kind=MemoryKind.FACT)

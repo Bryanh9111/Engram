@@ -202,6 +202,20 @@ def create_server() -> FastMCP:
         """Get memory store statistics."""
         return _handle_stats(store)
 
+    @mcp.tool()
+    def compile(project: str) -> str:
+        """Compile all memories for a project into structured Markdown overview. No LLM cost."""
+        return store.compile(project)
+
+    @mcp.tool()
+    def resolve(memory_id: str) -> dict:
+        """Mark a memory as resolved (handled, done). Stops proactive recall but keeps searchable."""
+        store.conn.execute(
+            "UPDATE memories SET status = 'resolved' WHERE id = ?", (memory_id,)
+        )
+        store.conn.commit()
+        return {"status": "resolved", "id": memory_id}
+
     return mcp
 
 

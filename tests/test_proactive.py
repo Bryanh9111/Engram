@@ -95,6 +95,36 @@ class TestProactiveRecall:
         results = engine.on_file_open("auth/login.ts")
         assert all(r.confidence >= 0.7 for r in results)
 
+    def test_resolved_excluded_from_proactive(self, engine):
+        """Resolved memories should not be proactively pushed."""
+        from engram.model import MemoryStatus
+        # Get a memory and mark it resolved
+        results = engine.on_file_open("payments/reconcile.ts")
+        assert len(results) >= 1
+        mem_id = results[0].id
+        engine.store.conn.execute(
+            "UPDATE memories SET status = ? WHERE id = ?",
+            (MemoryStatus.RESOLVED.value, mem_id),
+        )
+        engine.store.conn.commit()
+        # Should no longer appear
+        results_after = engine.on_file_open("payments/reconcile.ts")
+        assert all(r.id != mem_id for r in results_after)
+
+    def test_resolved_still_in_recall(self, engine):
+        """Resolved memories should still be searchable via recall."""
+        from engram.model import MemoryStatus
+        results = engine.store.recall("integer cents")
+        assert len(results) >= 1
+        mem_id = results[0].id
+        engine.store.conn.execute(
+            "UPDATE memories SET status = ? WHERE id = ?",
+            (MemoryStatus.RESOLVED.value, mem_id),
+        )
+        engine.store.conn.commit()
+        results_after = engine.store.recall("integer cents")
+        assert any(r.id == mem_id for r in results_after)
+
     def test_compiled_origin_excluded(self, engine):
         """origin='compiled' memories should not be proactively pushed."""
         from engram.model import MemoryOrigin

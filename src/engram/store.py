@@ -243,6 +243,7 @@ class MemoryStore:
             return self._recall_recent(where_sql, params, limit, budget)
 
         results = [self._row_to_memory(row) for row in rows]
+        results = self._rank_by_score(results)
         self._touch(results)
         self._log_op("recall", detail=f"query={query[:50]} results={len(results)}")
         self.conn.commit()
@@ -267,13 +268,14 @@ class MemoryStore:
     ) -> list[MemoryObject] | list[dict]:
         """Fallback: return recent active memories when no query."""
         sql = f"""
-            SELECT id, content, summary, kind, origin, project,
-                   path_scope, tags, confidence, evidence_link,
-                   status, strength, pinned, created_at,
-                   accessed_at, last_verified, access_count
+            SELECT m.id, m.content, m.summary, m.kind, m.origin, m.project,
+                   m.path_scope, m.tags, m.confidence, m.evidence_link,
+                   m.status, m.strength, m.pinned, m.created_at,
+                   m.accessed_at, m.last_verified, m.access_count
             FROM memories m
+            LEFT JOIN memory_scores ms ON m.id = ms.id
             WHERE m.status = 'active' {where_sql}
-            ORDER BY created_at DESC
+            ORDER BY COALESCE(ms.effective_score, 0.5) DESC
             LIMIT ?
         """
         rows = self.conn.execute(sql, params + [limit]).fetchall()
@@ -284,6 +286,19 @@ class MemoryStore:
         if budget == "tiny":
             return [self._to_card(m) for m in results]
         return results
+
+    def _rank_by_score(self, memories: list[MemoryObject]) -> list[MemoryObject]:
+        """Re-rank by effective_score from the memory_scores view."""
+        if not memories:
+            return memories
+        ids = [m.id for m in memories]
+        placeholders = ",".join("?" * len(ids))
+        scores = {}
+        for row in self.conn.execute(
+            f"SELECT id, effective_score FROM memory_scores WHERE id IN ({placeholders})", ids
+        ).fetchall():
+            scores[row[0]] = row[1]
+        return sorted(memories, key=lambda m: scores.get(m.id, 0.5), reverse=True)
 
     def _touch(self, memories: list[MemoryObject]) -> None:
         """Update access metadata for recalled memories."""
@@ -347,6 +362,33 @@ class MemoryStore:
             by_kind[row[0]] = row[1]
 
         return {"total": total, "active": active, "by_kind": by_kind}
+
+    def compile(self, project: str) -> str:
+        """Compile all active memories for a project into structured Markdown. No LLM."""
+        rows = self.conn.execute(
+            """SELECT kind, content, summary, pinned, evidence_link
+               FROM memories
+               WHERE status IN ('active', 'resolved') AND project = ?
+               ORDER BY kind, pinned DESC, confidence DESC""",
+            (project,),
+        ).fetchall()
+
+        if not rows:
+            return f"# {project}\n\nNo memories found."
+
+        lines = [f"# {project}", f"", f"*{len(rows)} memories*", ""]
+        current_kind = None
+        for kind, content, summary, pinned, evidence in rows:
+            if kind != current_kind:
+                current_kind = kind
+                lines.append(f"## {kind}")
+                lines.append("")
+            pin = " [pinned]" if pinned else ""
+            lines.append(f"- {summary}{pin}")
+            if evidence:
+                lines.append(f"  source: {evidence}")
+        lines.append("")
+        return "\n".join(lines)
 
     def export(self, path: str, *, fmt: str = "jsonl") -> None:
         """Export all memories to JSONL or Markdown."""

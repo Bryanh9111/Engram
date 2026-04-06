@@ -53,6 +53,17 @@ CREATE TABLE IF NOT EXISTS ops_log (
     detail    TEXT
 );
 
+CREATE VIEW IF NOT EXISTS memory_scores AS
+SELECT id,
+  CASE WHEN pinned = 1 THEN 10.0
+  ELSE
+    confidence
+    * (1.0 + 0.1 * MIN(access_count, 20))
+    * (1.0 / (1.0 + 0.02 * MAX(0, julianday('now') - julianday(COALESCE(accessed_at, created_at)))))
+  END AS effective_score
+FROM memories
+WHERE status IN ('active', 'resolved');
+
 CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
     INSERT INTO memories_fts(memories_fts, rowid, content, summary, tags)
     VALUES ('delete', old.rowid, old.content, old.summary, old.tags);

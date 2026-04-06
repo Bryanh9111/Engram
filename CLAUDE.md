@@ -70,19 +70,44 @@ tests/
 - L2 ~2-5K tokens — `recall(budget="normal")` 完整对象（默认）
 - L3 ~5-20K tokens — `recall(budget="deep")` 扩展结果 limit=50
 
-## MCP Tools (10)
+## 记忆状态 (status)
+
+- `active` — 正常，参与 proactive recall 和 recall
+- `resolved` — 已处理，不再 proactive 推送但仍可 recall 搜索
+- `suspect` — 可疑，需人工审核
+- `obsolete` — 软删除，不参与任何检索
+
+## 排序机制 (effective_score)
+
+recall 结果按 effective_score 排序：
+```
+score = confidence × (1 + 0.1 × min(access, 20)) × (1 / (1 + 0.02 × days_since_access))
+pinned 记忆 score = 10.0（始终最高）
+```
+
+## MCP Tools (12)
 
 ```bash
 uv run engram-server  # 启动 MCP server
 ```
 
 - `remember` — 写入记忆 (kind + origin)
-- `recall` — 检索 (budget: tiny/normal/deep)
-- `forget` — 软删除
+- `recall` — 检索 (budget: tiny/normal/deep，按 effective_score 排序)
+- `forget` — 软删除 (status → obsolete)
+- `resolve` — 标记已处理 (status → resolved，停止 proactive 推送)
 - `consolidate` — 归档候选
 - `proactive` — 文件打开时主动推送 guardrails
 - `suppress` — 临时静音某条 proactive 记忆
+- `compile` — 按项目编译记忆为结构化 Markdown（零 LLM）
 - `health` — 健康检查 (缺证据/孤岛/stale claims via check_stale=True)
 - `micro_index` — 紧凑索引 (~200 tokens)
 - `stats` — 统计
 - `export` — 导出 (jsonl/markdown)
+
+## CLI (7 commands)
+
+```bash
+engram add/search/forget/candidates/stats/dashboard
+```
+
+`dashboard` — 记忆脑全局状态（项目分布/kind分布/健康/近24h活动/热门记忆）
