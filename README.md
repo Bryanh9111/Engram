@@ -113,6 +113,9 @@ engram health
 
 # View stats
 engram stats
+
+# Brain status overview
+engram dashboard
 ```
 
 ### MCP Server (Claude Code integration)
@@ -133,17 +136,19 @@ Add to `~/.claude/.mcp.json`:
 }
 ```
 
-Restart Claude Code. Ten tools become available:
+Restart Claude Code. Twelve tools become available:
 
 | Tool | Purpose |
 |------|---------|
 | `remember` | Store a memory (kind + origin) |
-| `recall` | Search with budget control (`tiny`/`normal`/`deep`) |
+| `recall` | Search with budget control (`tiny`/`normal`/`deep`), ranked by effective_score |
 | `proactive` | Get guardrails for a file path |
-| `forget` | Soft-delete a memory |
+| `forget` | Soft-delete a memory (status → obsolete) |
+| `resolve` | Mark as handled (status → resolved, stops proactive but stays searchable) |
 | `suppress` | Temporarily silence a proactive memory |
+| `compile` | Compile all memories for a project into structured Markdown (zero LLM) |
 | `consolidate` | List archive candidates |
-| `health` | Check for missing evidence, orphans |
+| `health` | Check for missing evidence, orphans, stale claims |
 | `micro_index` | Compact index for cold-start (~200 tokens) |
 | `stats` | Memory statistics |
 | `export` | Export to JSONL or Markdown |
@@ -173,7 +178,7 @@ Three checks borrowed from [Karpathy's knowledge base linting](https://x.com/kar
 
 - **Missing evidence**: Constraints and guardrails without source links
 - **Orphans**: Memories never accessed, older than 30 days, not pinned
-- **Contradictions**: (v3) Semantically similar memories with conflicting conclusions
+- **Stale claims**: (`check_stale=True`) Older memories superseded by newer similar ones
 
 ## Export & Portability
 
@@ -196,30 +201,36 @@ SQLite is the runtime source of truth. JSONL is the migration format. Markdown i
 5. **Origin separation** — Human judgment and AI compilation never mix in retrieval
 6. **Token-efficient** — Retrieval cost is constant, not proportional to memory count
 7. **SQLite is the runtime truth** — Markdown is a derived export, not the source
+8. **Memories have metabolism** — Effective score decays with time, grows with access, pinned memories never fade
+9. **Human-observable** — Dashboard and compile give full visibility into the memory brain
 
 ## Tech Stack
 
 - Python 3.11+ / [uv](https://github.com/astral-sh/uv)
 - SQLite + FTS5 (WAL mode) — zero external dependencies
 - [MCP](https://modelcontextprotocol.io/) protocol via FastMCP
-- 85 tests, ~1,010 lines of code
+- 107 tests, ~1,250 lines of code
 
 ## Roadmap
 
-| Version | Trigger | Features |
-|---------|---------|----------|
-| **v2** (current) | — | 5 kinds, 3 origins, proactive recall, health checks, memory cards, export |
-| **v3** | FTS5 miss rate > 20% | Embedding search (sqlite-vec), compile() for knowledge synthesis |
-| **v4** | Memory count > 3,000 | Co-activation matrix, automatic contradiction detection |
-| **v5** | Multi-agent usage | Graph relations, shared memory scopes |
+| Phase | Trigger | Features |
+|-------|---------|----------|
+| **v2** | — | 5 kinds, 3 origins, proactive recall, health checks, memory cards, export |
+| **v2.1** | — | Ops log, write templates, stale claims detection, L0-L3 budget |
+| **v3** (current) | — | Resolved status, effective_score ranking, dashboard, compile, 12 MCP tools |
+| **v4** | 500-1000 memories | LLM-powered compile (Auto-Dream style), merge threshold tuning, project-namespaced recall |
+| **v5** | 1500-2000 memories | Embedding search (sqlite-vec), hybrid ranking (FTS5 + vector + score) |
+| **v6** | 3000+ memories | Dream agent (Auto-Dream style periodic consolidation), co-activation matrix |
 
 ## Background
 
-Engram's architecture was validated through structured multi-model debates:
+Engram's architecture was validated through five rounds of structured multi-model debates (Claude Opus, Sonnet, Gemini 2.5 Pro, GPT-5.4), drawing from:
 
-- **Round 1**: Should this be a database or files? (Verdict: SQLite, with Markdown as export)
-- **Round 2**: What makes this 10x better than MEMORY.md? (Verdict: proactive recall)
-- **Round 3**: How to fuse Karpathy's knowledge compilation + Obsidian's metadata system + Engram's active recall? (Verdict: dual-layer storage with origin separation)
+- [Karpathy's LLM Knowledge Bases](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) — compile/lint/index patterns
+- [Anthropic's Harness Engineering](https://www.anthropic.com/engineering/harness-design-long-running-apps) — evaluator separation, structured handoffs
+- [Claude Code Auto-Dream](https://github.com/anthropics/claude-code) — background memory consolidation (Orient→Gather→Consolidate→Prune)
+- [Ombre Brain](https://github.com/P0lar1zzZ/Ombre-Brain) — Ebbinghaus decay, resolved status, weight pool
+- [kepano (Obsidian founder)](https://x.com/kepano) — origin separation to prevent AI contamination of human judgment
 
 The name "engram" comes from neuroscience — a hypothetical means by which memory traces are stored in the brain.
 
