@@ -151,8 +151,12 @@ engram forget       # Soft-delete a memory by ID
 engram candidates   # List archive candidates
 engram stats        # Quick statistics
 engram dashboard    # Full brain status overview
-engram health       # Health checks (missing evidence, orphans)
+engram lint         # Full health check (evidence + orphans + stale + kind TTL)
 ```
+
+### Optional: Claude Code Hooks
+
+For automatic brain overview injection at session start (and optional memory whispering), see `hooks/README.md`. Adds ~200 tokens per session, zero LLM calls.
 
 ### MCP Tools (12)
 
@@ -237,10 +241,15 @@ SQLite is the runtime source of truth. JSONL is the migration format. Markdown i
 |-------|---------|----------|
 | **v2** | — | 5 kinds, 3 origins, proactive recall, health checks, memory cards, export |
 | **v2.1** | — | Ops log, write templates, stale claims detection, L0-L3 budget |
-| **v3** (current) | — | Resolved status, effective_score ranking, dashboard, compile, 12 MCP tools |
-| **v4** | 500-1000 memories | LLM-powered compile (Auto-Dream style), merge threshold tuning, project-namespaced recall |
-| **v5** | 1500-2000 memories | Embedding search (sqlite-vec), hybrid ranking (FTS5 + vector + score) |
-| **v6** | 3000+ memories | Dream agent (Auto-Dream style periodic consolidation), co-activation matrix |
+| **v3** | — | Resolved status, effective_score ranking, dashboard, compile, 12 MCP tools |
+| **v3.1** (current) | — | Memory lint (kind-TTL staleness), Claude Code hooks integration |
+| **v4** | 500 memories | LLM-powered compile with Planner→Worker→Critic pattern (ToFu-inspired) |
+| **v4.1** | time-sensitive memories >10% | Temporal expiry (degrade, not hide) |
+| **v5** | FTS5 miss evidence | Multi-path recall + LLM reranking |
+| **v6** | 2000 memories | Embedding (sqlite-vec) + RRF fusion |
+| **v7** | 3000 memories | Memory graph (relationships) + Dream agent |
+
+**Killed ideas** (not in roadmap): Debounced write queue (durability > commit savings), silent auto-delete, blob memories, opaque ranking, background source rewriting.
 
 ## Background
 

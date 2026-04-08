@@ -55,6 +55,13 @@ tests/
 - SQLite 是运行时真相源，Markdown 是编译/导出层
 - origin 分离防止 AI 编译产物污染人类判断
 
+## 永不做清单（GPT-5.4 约束，永久有效）
+
+1. **NO silent auto-delete** — 记忆只能被显式 forget/resolve
+2. **NO blob memories / wiki dumps** — 保持 atomic claims，不存大段内容
+3. **NO opaque ranking** — 必须能解释为什么这条记忆浮现
+4. **NO background rewriting** — 不未经人类审核改写源记忆
+
 ## 写入质量规则 (kind-specific)
 
 - `guardrail` 无 evidence_link → confidence 降至 0.7
@@ -104,10 +111,46 @@ uv run engram-server  # 启动 MCP server
 - `stats` — 统计
 - `export` — 导出 (jsonl/markdown)
 
-## CLI (7 commands)
+## CLI (8 commands)
 
 ```bash
-engram add/search/forget/candidates/stats/dashboard
+engram add/search/forget/candidates/stats/dashboard/lint
 ```
 
-`dashboard` — 记忆脑全局状态（项目分布/kind分布/健康/近24h活动/热门记忆）
+- `dashboard` — 记忆脑全局状态（项目分布/kind分布/健康/近24h活动/热门记忆）
+- `lint` — 全面健康检查（缺证据+孤岛+stale claims+kind-specific TTL）
+
+## Kind-Specific Staleness TTL
+
+`engram lint` 按 kind 检查陈旧度（只警告，不自动删除）：
+
+- `fact` — 7 天
+- `procedure` — 30 天
+- `decision` — 90 天
+- `constraint` / `guardrail` — 永不 age-flag（长期有效）
+
+## Claude Code Hooks（可选自动化）
+
+`hooks/` 目录提供 opt-in Claude Code hook 集成：
+- `session_start.sh` — 会话开始时注入 brain overview (~200 tokens)
+- `user_prompt_submit.sh` — 每个 prompt 前 whisper 相关记忆 (~150 tokens, `ENGRAM_WHISPER=0` 关闭)
+
+安装：在 `~/.claude/settings.json` 的 hooks 配置里引用这些脚本。详见 `hooks/README.md`。
+
+## Roadmap
+
+```
+v3.1 (current) — memory lint + Claude Code hooks
+   ↓
+v4 (trigger: 500 memories) — LLM compile with Planner→Worker→Critic
+   ↓
+v4.1 (trigger: 时间敏感 memories >10% 或 >30 条) — Temporal Expiry (A, deferred)
+   ↓
+v5 (trigger: >5 FTS5 miss 真实案例) — Multi-path Recall (C) + LLM rerank
+   ↓
+v6 (trigger: 2000 memories) — Embedding (sqlite-vec) + RRF fusion
+   ↓
+v7 (trigger: 3000 memories) — Memory graph + Dream agent
+```
+
+**KILLED**: Debounced Write Queue (durability > 省 commit)

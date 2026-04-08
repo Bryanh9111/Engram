@@ -422,6 +422,46 @@ class TestHealth:
         report = populated_store.health()
         assert "stale_claims" not in report or report.get("stale_claims") == []
 
+    def test_lint_kind_staleness_fact(self, store):
+        """fact memories older than 7 days should be flagged as stale."""
+        store.remember(content="Temporary flag setting", kind=MemoryKind.FACT, project="test")
+        store.conn.execute(
+            "UPDATE memories SET created_at = '2025-01-01T00:00:00+00:00' WHERE project = 'test'"
+        )
+        store.conn.commit()
+        report = store.health(check_stale=True)
+        assert "kind_staleness" in report
+        fact_stale = [s for s in report["kind_staleness"] if s["kind"] == "fact"]
+        assert len(fact_stale) >= 1
+
+    def test_lint_kind_staleness_decision_longer_ttl(self, store):
+        """decision memories have 90d TTL, not 7d."""
+        store.remember(content="Use polling for status", kind=MemoryKind.DECISION, project="test")
+        # Age by 30 days — fact would be stale, decision should not
+        store.conn.execute(
+            "UPDATE memories SET created_at = datetime('now', '-30 days')"
+        )
+        store.conn.commit()
+        report = store.health(check_stale=True)
+        decision_stale = [s for s in report.get("kind_staleness", []) if s["kind"] == "decision"]
+        assert len(decision_stale) == 0
+
+    def test_lint_constraint_and_guardrail_never_stale_by_age(self, store):
+        """constraint/guardrail are long-lived and should not be age-flagged."""
+        store.remember(
+            content="Money must be integer cents",
+            kind=MemoryKind.CONSTRAINT,
+            project="test",
+            evidence_link="https://example.com/pr",
+        )
+        store.conn.execute(
+            "UPDATE memories SET created_at = '2025-01-01T00:00:00+00:00'"
+        )
+        store.conn.commit()
+        report = store.health(check_stale=True)
+        for s in report.get("kind_staleness", []):
+            assert s["kind"] not in ("constraint", "guardrail")
+
     def test_stale_claims_same_project_only(self, store):
         """Cross-project similar content should not be flagged."""
         store.remember(content="Use UTC everywhere", kind=MemoryKind.CONSTRAINT, project="alpha")

@@ -104,6 +104,37 @@ def cmd_stats(args, store: MemoryStore) -> None:
             print(f"  {kind}: {count}")
 
 
+def cmd_lint(args, store: MemoryStore) -> None:
+    report = store.health(check_stale=True)
+    total = report["total_issues"]
+    print(f"Engram Lint — {total} issues")
+    print("-" * 40)
+
+    if report["missing_evidence"]:
+        print(f"\nMissing evidence ({len(report['missing_evidence'])}):")
+        for r in report["missing_evidence"][:10]:
+            print(f"  [{r['kind']}] {r['id']}: {r['summary'][:60]}")
+
+    if report["orphans"]:
+        print(f"\nOrphans ({len(report['orphans'])}):")
+        for r in report["orphans"][:10]:
+            print(f"  [{r['kind']}] {r['id']}: {r['summary'][:60]}")
+
+    if report.get("stale_claims"):
+        print(f"\nStale claims ({len(report['stale_claims'])}):")
+        for r in report["stale_claims"][:10]:
+            print(f"  {r['old_id']} → superseded by {r['new_id']}")
+            print(f"    old: {r['old_content'][:60]}")
+
+    if report.get("kind_staleness"):
+        print(f"\nKind staleness ({len(report['kind_staleness'])}):")
+        for r in report["kind_staleness"][:10]:
+            print(f"  [{r['kind']}] {r['id']} (>{r['ttl_days']}d old): {r['summary'][:50]}")
+
+    if total == 0:
+        print("\nAll clean.")
+
+
 def cmd_dashboard(args, store: MemoryStore) -> None:
     s = store.stats()
     pinned = store.conn.execute(
@@ -204,6 +235,9 @@ def main(argv: list[str] | None = None) -> None:
     # dashboard
     sub.add_parser("dashboard", help="Brain status overview")
 
+    # lint
+    sub.add_parser("lint", help="Full health check (missing evidence + orphans + stale + kind TTL)")
+
     args = parser.parse_args(argv)
 
     db_path = _get_db_path()
@@ -213,7 +247,7 @@ def main(argv: list[str] | None = None) -> None:
     try:
         {"add": cmd_add, "search": cmd_search, "forget": cmd_forget,
          "candidates": cmd_candidates, "stats": cmd_stats,
-         "dashboard": cmd_dashboard}[args.command](args, store)
+         "dashboard": cmd_dashboard, "lint": cmd_lint}[args.command](args, store)
     finally:
         store.close()
 

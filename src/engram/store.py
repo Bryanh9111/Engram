@@ -472,10 +472,45 @@ created_at: {mem.created_at.isoformat()}
         # Stale claims: newer memory supersedes older similar memory (opt-in)
         if check_stale:
             result["stale_claims"] = self._find_stale_claims()
+            result["kind_staleness"] = self._find_kind_staleness()
 
-        total = len(missing_evidence) + len(orphans) + len(result.get("stale_claims", []))
+        total = (
+            len(missing_evidence)
+            + len(orphans)
+            + len(result.get("stale_claims", []))
+            + len(result.get("kind_staleness", []))
+        )
         result["total_issues"] = total
         return result
+
+    # Kind-specific TTL for staleness warning (not auto-deletion).
+    # constraint/guardrail are long-lived and excluded.
+    _KIND_TTL_DAYS = {
+        "fact": 7,
+        "procedure": 30,
+        "decision": 90,
+    }
+
+    def _find_kind_staleness(self) -> list[dict]:
+        """Flag memories past their kind-specific TTL. Warning only, not auto-delete."""
+        stale: list[dict] = []
+        for kind, ttl in self._KIND_TTL_DAYS.items():
+            rows = self.conn.execute(
+                """SELECT id, summary, kind, created_at FROM memories
+                   WHERE status = 'active'
+                     AND kind = ?
+                     AND pinned = 0
+                     AND julianday('now') - julianday(COALESCE(accessed_at, created_at)) > ?""",
+                (kind, ttl),
+            ).fetchall()
+            for r in rows:
+                stale.append({
+                    "id": r[0],
+                    "summary": r[1],
+                    "kind": r[2],
+                    "ttl_days": ttl,
+                })
+        return stale
 
     def _find_stale_claims(self) -> list[dict]:
         """Find memories where a newer memory on same project supersedes an older one."""
