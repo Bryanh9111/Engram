@@ -72,19 +72,26 @@ Inspired by [kepano](https://x.com/kepano) (Obsidian founder): AI-compiled knowl
 | `agent` | Medium — AI discovered during work | Yes |
 | `compiled` | Reference — AI-generated summaries | **No** — only returned on explicit recall |
 
-### Token Budget
+### Token Budget (measured at 290 memories)
 
-Retrieval cost is constant regardless of memory count:
+Retrieval cost is constant regardless of memory count. These numbers are **real measurements**, not estimates:
 
 | Operation | Tokens | Scale behavior |
 |-----------|--------|---------------|
-| Micro-index (cold start) | ~200 | Fixed |
-| Recall `budget=tiny` (5 cards) | ~300 | Fixed |
-| Recall `budget=normal` (5 results) | ~800 | Fixed |
-| Proactive recall (3 cards) | ~150 | Fixed |
-| **Compare: MEMORY.md** | **3,000-5,000** | **Grows linearly** |
+| `micro_index()` (cold start) | **78** | Fixed |
+| `stats()` | **41** | Fixed |
+| `remember()` return | **97** | Fixed |
+| `recall(budget=tiny, 5)` | **432** | Fixed |
+| `recall(budget=normal, 5)` | **822** | Fixed |
+| `recall(budget=deep, 5)` | **3,980** | Grows with result size |
+| `proactive(file_path)` | **0-300** | Depends on matches |
+| `health()` via MCP (summary mode) | **40** | Fixed |
+| `compile(project)` Markdown | **~3,000** | Grows with project size |
+| **Compare: MEMORY.md loaded every prompt** | **3,000-5,000** | **Grows linearly** |
 
-At 10,000 memories, Engram still costs ~300 tokens per retrieval. MEMORY.md would be impossible.
+A typical session uses ~1-2K tokens for all memory operations — well under 2% of a Claude Max 5-hour window.
+
+At 10,000 memories, Engram still costs the same tokens per retrieval. MEMORY.md would be impossible at that scale.
 
 ## Setup (for AI Agents and Humans)
 
@@ -138,7 +145,7 @@ Verify installation:
 uv run pytest tests/ -q
 ```
 
-Expected: `110 passed in 0.Xs`. All tests must pass before proceeding.
+Expected: `113 passed in 0.Xs`. All tests must pass before proceeding.
 
 ### Step 4: Connect to Claude Code (global MCP)
 
@@ -259,7 +266,7 @@ The philosophy: **memories enter context as claims, not documents; with provenan
 ## Health Checks
 
 ```bash
-engram health
+engram lint
 ```
 
 Three checks borrowed from [Karpathy's knowledge base linting](https://x.com/karpathy/status/1911070032680222720):
@@ -297,7 +304,7 @@ SQLite is the runtime source of truth. JSONL is the migration format. Markdown i
 - Python 3.11+ / [uv](https://github.com/astral-sh/uv)
 - SQLite + FTS5 (WAL mode) — zero external dependencies
 - [MCP](https://modelcontextprotocol.io/) protocol via FastMCP
-- 110 tests, ~1,450 lines of code
+- 113 tests, ~1,500 lines of code
 
 ## Roadmap
 
