@@ -30,11 +30,11 @@ Engram fixes all of this.
 ```
               AI Agent (Claude Code / Gemma / etc.)
                     |
-            MCP Server (10 tools)
+            MCP Server (12 tools)
                     |
      .------.-------.-------.-------.
      |      |       |       |       |
-  recall  remember  proactive  health  ...
+  recall  remember  proactive  lint   ...
      |      |       |       |       |
      '------'-------'-------'-------'
                     |
@@ -86,30 +86,70 @@ Retrieval cost is constant regardless of memory count:
 
 At 10,000 memories, Engram still costs ~300 tokens per retrieval. MEMORY.md would be impossible.
 
-## Quick Start
+## Setup (for AI Agents and Humans)
 
-### Prerequisites
+Follow these steps exactly. Agents on new machines can execute this end-to-end without ambiguity.
 
-- [uv](https://github.com/astral-sh/uv) (Python package manager)
-  ```bash
-  curl -LsSf https://astral.sh/uv/install.sh | sh
-  ```
-- Python 3.11+ (uv will auto-install if needed)
-- No Docker, no Postgres, no external services required
+### Step 1: Install uv
 
-### Install
+If `uv` is not installed:
 
 ```bash
-git clone https://github.com/Bryanh9111/Engram.git
-cd Engram
+curl -LsSf https://astral.sh/uv/install.sh | sh
+source "$HOME/.local/bin/env" 2>/dev/null || source "$HOME/.cargo/env" 2>/dev/null || true
+```
+
+Verify:
+
+```bash
+uv --version
+```
+
+Expected output: `uv 0.x.x`. If the command is not found, add `~/.local/bin` to your PATH.
+
+### Step 2: Clone the repo
+
+Choose a clone location. The path is your choice but must be **absolute** (not relative).
+
+```bash
+# Example: clone to home directory
+git clone https://github.com/Bryanh9111/Engram.git ~/Engram
+cd ~/Engram
+```
+
+Remember this path. You will need the **absolute path** in Step 4. Get it with:
+
+```bash
+pwd
+# Example output: /Users/yourname/Engram
+```
+
+### Step 3: Install dependencies
+
+```bash
 uv sync --extra dev --extra mcp
 ```
 
-That's it. The database (`~/.engram/engram.db`) is created automatically on first use.
+This installs Python dependencies (SQLite, FastMCP, pytest). No Docker, no Postgres, no external services. First run takes 30-60 seconds.
 
-### Connect to Claude Code
+Verify installation:
 
-Add to `~/.claude/.mcp.json` (create the file if it doesn't exist):
+```bash
+uv run pytest tests/ -q
+```
+
+Expected: `110 passed in 0.Xs`. All tests must pass before proceeding.
+
+### Step 4: Connect to Claude Code (global MCP)
+
+Create or edit `~/.claude/.mcp.json`. If the file does not exist, create it:
+
+```bash
+mkdir -p ~/.claude
+touch ~/.claude/.mcp.json
+```
+
+Open the file and add the following JSON. **You must replace `/absolute/path/to/Engram` with the actual absolute path from Step 2 (the output of `pwd`)**:
 
 ```json
 {
@@ -122,41 +162,65 @@ Add to `~/.claude/.mcp.json` (create the file if it doesn't exist):
 }
 ```
 
-Replace `/absolute/path/to/Engram` with the actual path where you cloned the repo.
+If `~/.claude/.mcp.json` already has other MCP servers, merge the `engram` entry into the existing `mcpServers` object — do not overwrite the file.
 
-Restart Claude Code. Twelve tools become available in every project.
+### Step 5: Restart Claude Code
 
-### Verify it works
+Fully quit and relaunch Claude Code. The Engram MCP server starts automatically on first connection. All 12 tools become available in every project.
+
+### Step 6: Verify end-to-end
+
+From any terminal (not necessarily inside the Engram directory):
 
 ```bash
 # Add a test memory
-engram add "This is a test" --kind fact
+cd ~/Engram  # or wherever you cloned
+uv run engram add "First memory on this machine" --kind fact
 
 # Search for it
-engram search "test"
+uv run engram search "First memory"
 
-# See the brain overview
-engram dashboard
+# See the full brain overview
+uv run engram dashboard
 
-# Run health checks
-engram health
+# Run full health check
+uv run engram lint
 ```
 
-### CLI Commands
+If all four commands work, Engram is installed and connected. The database is created at `~/.engram/engram.db` automatically.
+
+### Step 7 (optional): Install Claude Code hooks
+
+For automatic memory injection at session start, see [`hooks/README.md`](hooks/README.md) for hook installation.
+
+---
+
+## Daily Usage
+
+### CLI (for humans / scripts)
 
 ```bash
-engram add          # Remember something (--kind constraint/decision/procedure/fact/guardrail)
-engram search       # Search memories (--project, --kind, --json, --limit)
-engram forget       # Soft-delete a memory by ID
-engram candidates   # List archive candidates
-engram stats        # Quick statistics
-engram dashboard    # Full brain status overview
-engram lint         # Full health check (evidence + orphans + stale + kind TTL)
+uv run engram add "..."   --kind constraint --project myproj --path-scope "src/*"
+uv run engram search "auth bug" --project myproj --limit 5
+uv run engram dashboard                  # Full brain overview
+uv run engram lint                        # Health check
+uv run engram forget <memory-id>          # Soft-delete
+uv run engram stats                       # Quick stats
+uv run engram candidates                  # Archive candidates
 ```
 
-### Optional: Claude Code Hooks
+### MCP (for Claude Code)
 
-For automatic brain overview injection at session start (and optional memory whispering), see `hooks/README.md`. Adds ~200 tokens per session, zero LLM calls.
+Claude Code calls these automatically via MCP when connected. You do not need to invoke them manually — just chat with Claude normally and it will `remember()` / `recall()` / `proactive()` as appropriate. The global CLAUDE.md instructions guide when to capture memories.
+
+### Troubleshooting
+
+- **`uv: command not found`** — Re-run Step 1 and add `~/.local/bin` to PATH
+- **`No module named 'engram'`** — Run `uv sync --extra dev --extra mcp` again in the Engram directory
+- **MCP tools not appearing in Claude Code** — Check `~/.claude/.mcp.json` syntax is valid JSON, path is absolute, then fully restart Claude Code
+- **Tests failing** — Run `uv sync --extra dev --extra mcp` to ensure all dev dependencies are installed
+- **Database location** — Default is `~/.engram/engram.db`. Override with `export ENGRAM_DB=/path/to/custom.db`
+- **Backup** — The database is a single SQLite file. Copy `~/.engram/engram.db` (plus `.db-wal` and `.db-shm` if present) to back up. Restore by copying back.
 
 ### MCP Tools (12)
 
@@ -233,7 +297,7 @@ SQLite is the runtime source of truth. JSONL is the migration format. Markdown i
 - Python 3.11+ / [uv](https://github.com/astral-sh/uv)
 - SQLite + FTS5 (WAL mode) — zero external dependencies
 - [MCP](https://modelcontextprotocol.io/) protocol via FastMCP
-- 107 tests, ~1,250 lines of code
+- 110 tests, ~1,450 lines of code
 
 ## Roadmap
 
