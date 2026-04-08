@@ -147,29 +147,33 @@ uv run pytest tests/ -q
 
 Expected: `113 passed in 0.Xs`. All tests must pass before proceeding.
 
-### Step 4: Connect to Claude Code (global MCP)
+### Step 4: Connect to Claude Code (user-scoped MCP)
 
-Create or edit `~/.claude/.mcp.json`. If the file does not exist, create it:
+Use the `claude mcp add` command to register Engram as a **user-scoped** MCP server (available in every project on your machine):
 
 ```bash
-mkdir -p ~/.claude
-touch ~/.claude/.mcp.json
+claude mcp add -s user engram uv -- --directory /absolute/path/to/Engram run engram-server
 ```
 
-Open the file and add the following JSON. **You must replace `/absolute/path/to/Engram` with the actual absolute path from Step 2 (the output of `pwd`)**:
+**Replace `/absolute/path/to/Engram` with your actual absolute path** (from `pwd` in Step 2).
 
-```json
-{
-  "mcpServers": {
-    "engram": {
-      "command": "uv",
-      "args": ["--directory", "/absolute/path/to/Engram", "run", "engram-server"]
-    }
-  }
-}
+The `-s user` flag is **critical** — without it, the server is only available in the directory you ran the command from. With `-s user`, it works globally.
+
+Verify it registered:
+
+```bash
+claude mcp list
 ```
 
-If `~/.claude/.mcp.json` already has other MCP servers, merge the `engram` entry into the existing `mcpServers` object — do not overwrite the file.
+You should see:
+
+```
+engram: uv --directory /your/path/to/Engram run engram-server - ✓ Connected
+```
+
+If you see `✗ Failed to connect`, the server crashed on startup — run `uv run engram-server` manually from the Engram directory to see the error.
+
+**Note:** Do NOT manually create `~/.claude/.mcp.json` — that path is not read by Claude Code. The `claude mcp add -s user` command writes to the correct location (`~/.claude.json`).
 
 ### Step 5: Restart Claude Code
 
@@ -224,7 +228,7 @@ Claude Code calls these automatically via MCP when connected. You do not need to
 
 - **`uv: command not found`** — Re-run Step 1 and add `~/.local/bin` to PATH
 - **`No module named 'engram'`** — Run `uv sync --extra dev --extra mcp` again in the Engram directory
-- **MCP tools not appearing in Claude Code** — Check `~/.claude/.mcp.json` syntax is valid JSON, path is absolute, then fully restart Claude Code
+- **MCP tools not appearing in Claude Code** — Run `claude mcp list` to check engram is registered and shows `✓ Connected`. If missing, re-run Step 4 (with `-s user`!). If `✗ Failed`, run `uv run engram-server` manually from the Engram directory to see the error. Fully restart Claude Code after fixing.
 - **Tests failing** — Run `uv sync --extra dev --extra mcp` to ensure all dev dependencies are installed
 - **Database location** — Default is `~/.engram/engram.db`. Override with `export ENGRAM_DB=/path/to/custom.db`
 - **Backup** — The database is a single SQLite file. Copy `~/.engram/engram.db` (plus `.db-wal` and `.db-shm` if present) to back up. Restore by copying back.
