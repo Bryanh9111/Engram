@@ -110,7 +110,9 @@ def _handle_stats(store: MemoryStore) -> dict:
 
 
 def _handle_health(store: MemoryStore, check_stale: bool = False) -> dict:
-    return store.health(check_stale=check_stale)
+    # MCP defaults to summary mode to save tokens (~200 vs ~5500 at 300 memories).
+    # CLI uses full mode via store.health() directly.
+    return store.health(check_stale=check_stale, summary=True)
 
 
 def _handle_export(store: MemoryStore, path: str, fmt: str = "jsonl") -> dict:

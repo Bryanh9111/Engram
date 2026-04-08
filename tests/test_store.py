@@ -422,6 +422,28 @@ class TestHealth:
         report = populated_store.health()
         assert "stale_claims" not in report or report.get("stale_claims") == []
 
+    def test_health_summary_mode_returns_counts_only(self, populated_store):
+        """summary=True returns counts (not full lists) to save tokens in MCP."""
+        report = populated_store.health(summary=True)
+        assert "missing_evidence_count" in report
+        assert isinstance(report["missing_evidence_count"], int)
+        # Must NOT include full list in summary mode
+        assert "missing_evidence" not in report or report.get("missing_evidence") is None
+
+    def test_health_summary_under_300_tokens(self, populated_store):
+        """summary mode must be compact."""
+        import json
+        report = populated_store.health(summary=True, check_stale=True)
+        size = len(json.dumps(report, ensure_ascii=False))
+        # ~3 chars/token, under 900 chars = ~300 tokens
+        assert size < 900, f"Summary too large: {size} chars"
+
+    def test_health_default_full_mode(self, populated_store):
+        """Default mode keeps backward compat with full lists."""
+        report = populated_store.health()
+        assert "missing_evidence" in report
+        assert isinstance(report["missing_evidence"], list)
+
     def test_lint_kind_staleness_fact(self, store):
         """fact memories older than 7 days should be flagged as stale."""
         store.remember(content="Temporary flag setting", kind=MemoryKind.FACT, project="test")

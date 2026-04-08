@@ -96,9 +96,10 @@ class TestMCPTools:
 
         store = MemoryStore(str(tmp_path / "test.db"))
         _handle_remember(store, content="Missing evidence", kind="constraint")
+        # MCP health returns summary mode (counts only) to save tokens
         result = _handle_health(store)
-        assert "missing_evidence" in result
-        assert len(result["missing_evidence"]) >= 1
+        assert "missing_evidence_count" in result
+        assert result["missing_evidence_count"] >= 1
 
     def test_micro_index_tool(self, tmp_path):
         from engram.server import _handle_micro_index, _handle_remember

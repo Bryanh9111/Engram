@@ -438,8 +438,18 @@ created_at: {mem.created_at.isoformat()}
 """
                 (out_dir / f"{mem.id}.md").write_text(md)
 
-    def health(self, *, orphan_age_days: int = 30, check_stale: bool = False) -> dict:
-        """Run health checks: missing evidence, orphans, stale claims."""
+    def health(
+        self,
+        *,
+        orphan_age_days: int = 30,
+        check_stale: bool = False,
+        summary: bool = False,
+    ) -> dict:
+        """Run health checks: missing evidence, orphans, stale claims.
+
+        summary=False (default): returns full lists (CLI use, ~5K tokens at 300 memories)
+        summary=True: returns counts only (MCP use, ~200 tokens regardless of scale)
+        """
         # Missing evidence: constraint/guardrail without evidence_link
         missing = self.conn.execute(
             """SELECT id, summary, kind FROM memories
@@ -447,9 +457,6 @@ created_at: {mem.created_at.isoformat()}
                  AND kind IN ('constraint', 'guardrail')
                  AND (evidence_link IS NULL OR evidence_link = '')"""
         ).fetchall()
-        missing_evidence = [
-            {"id": r[0], "summary": r[1], "kind": r[2]} for r in missing
-        ]
 
         # Orphans: access_count=0, old, not pinned
         orphans_rows = self.conn.execute(
@@ -460,27 +467,37 @@ created_at: {mem.created_at.isoformat()}
                  AND julianday('now') - julianday(created_at) > ?""",
             (orphan_age_days,),
         ).fetchall()
-        orphans = [
-            {"id": r[0], "summary": r[1], "kind": r[2]} for r in orphans_rows
-        ]
 
-        result: dict = {
-            "missing_evidence": missing_evidence,
-            "orphans": orphans,
+        stale_claims = self._find_stale_claims() if check_stale else []
+        kind_staleness = self._find_kind_staleness() if check_stale else []
+
+        total = len(missing) + len(orphans_rows) + len(stale_claims) + len(kind_staleness)
+
+        if summary:
+            # Compact mode for MCP: counts only
+            result: dict = {
+                "missing_evidence_count": len(missing),
+                "orphans_count": len(orphans_rows),
+                "total_issues": total,
+            }
+            if check_stale:
+                result["stale_claims_count"] = len(stale_claims)
+                result["kind_staleness_count"] = len(kind_staleness)
+            return result
+
+        # Full mode for CLI: complete lists
+        result = {
+            "missing_evidence": [
+                {"id": r[0], "summary": r[1], "kind": r[2]} for r in missing
+            ],
+            "orphans": [
+                {"id": r[0], "summary": r[1], "kind": r[2]} for r in orphans_rows
+            ],
+            "total_issues": total,
         }
-
-        # Stale claims: newer memory supersedes older similar memory (opt-in)
         if check_stale:
-            result["stale_claims"] = self._find_stale_claims()
-            result["kind_staleness"] = self._find_kind_staleness()
-
-        total = (
-            len(missing_evidence)
-            + len(orphans)
-            + len(result.get("stale_claims", []))
-            + len(result.get("kind_staleness", []))
-        )
-        result["total_issues"] = total
+            result["stale_claims"] = stale_claims
+            result["kind_staleness"] = kind_staleness
         return result
 
     # Kind-specific TTL for staleness warning (not auto-deletion).
