@@ -29,6 +29,12 @@ class MemoryOrigin(str, Enum):
     COMPILED = "compiled"
 
 
+class MemoryScope(str, Enum):
+    PROJECT = "project"
+    GLOBAL = "global"
+    META = "meta"
+
+
 def _generate_id() -> str:
     return uuid.uuid4().hex[:12]
 
@@ -58,6 +64,7 @@ class MemoryObject:
     status: MemoryStatus = MemoryStatus.ACTIVE
     strength: float = 0.5
     pinned: bool = False
+    scope: MemoryScope | None = None
     created_at: datetime = field(default_factory=_now)
     accessed_at: datetime | None = None
     last_verified: datetime | None = None
@@ -66,3 +73,5 @@ class MemoryObject:
     def __post_init__(self):
         if not self.summary:
             self.summary = _make_summary(self.content)
+        if self.scope is None:
+            self.scope = MemoryScope.META if self.project is None else MemoryScope.PROJECT

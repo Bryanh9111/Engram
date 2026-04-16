@@ -81,6 +81,25 @@ def cmd_forget(args, store: MemoryStore) -> None:
     print(f"Forgot {args.id}")
 
 
+def cmd_unpin(args, store: MemoryStore) -> None:
+    if not args.yes:
+        row = store.conn.execute(
+            "SELECT kind, substr(content, 1, 80) FROM memories WHERE id = ?",
+            (args.id,),
+        ).fetchone()
+        if row is None:
+            print(f"Memory {args.id} not found")
+            return
+        print(f"About to unpin [{row[0]}] {args.id}:")
+        print(f"  {row[1]}...")
+        resp = input("Proceed? (y/N): ").strip().lower()
+        if resp != "y":
+            print("Cancelled.")
+            return
+    result = store.unpin(args.id)
+    print(f"{result['status']}: {args.id}")
+
+
 def cmd_candidates(args, store: MemoryStore) -> None:
     candidates = store.consolidate_candidates(
         max_age_days=args.max_age_days,
@@ -224,6 +243,11 @@ def main(argv: list[str] | None = None) -> None:
     p_forget = sub.add_parser("forget", help="Forget a memory")
     p_forget.add_argument("id", help="Memory ID")
 
+    # unpin
+    p_unpin = sub.add_parser("unpin", help="Unpin a memory (use sparingly)")
+    p_unpin.add_argument("id", help="Memory ID")
+    p_unpin.add_argument("--yes", action="store_true", help="Skip confirmation")
+
     # candidates
     p_cand = sub.add_parser("candidates", help="List archive candidates")
     p_cand.add_argument("--max-age-days", type=int, default=90)
@@ -246,6 +270,7 @@ def main(argv: list[str] | None = None) -> None:
 
     try:
         {"add": cmd_add, "search": cmd_search, "forget": cmd_forget,
+         "unpin": cmd_unpin,
          "candidates": cmd_candidates, "stats": cmd_stats,
          "dashboard": cmd_dashboard, "lint": cmd_lint}[args.command](args, store)
     finally:

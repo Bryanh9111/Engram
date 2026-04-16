@@ -255,6 +255,58 @@ class TestForget:
             populated_store.forget(pinned_mem.id)
 
 
+class TestUnpin:
+    def test_unpin_pinned_memory(self, populated_store):
+        results = populated_store.recall("integer cents")
+        pinned_mem = [r for r in results if r.pinned][0]
+
+        result = populated_store.unpin(pinned_mem.id)
+
+        assert result["status"] == "unpinned"
+        row = populated_store.conn.execute(
+            "SELECT pinned FROM memories WHERE id = ?", (pinned_mem.id,)
+        ).fetchone()
+        assert row[0] == 0
+
+    def test_unpin_allows_forget_after(self, populated_store):
+        results = populated_store.recall("integer cents")
+        pinned_mem = [r for r in results if r.pinned][0]
+
+        populated_store.unpin(pinned_mem.id)
+        populated_store.forget(pinned_mem.id)
+
+        row = populated_store.conn.execute(
+            "SELECT status FROM memories WHERE id = ?", (pinned_mem.id,)
+        ).fetchone()
+        assert row[0] == "obsolete"
+
+    def test_unpin_nonexistent_raises(self, store):
+        with pytest.raises(ValueError, match="not found"):
+            store.unpin("nonexistent_id")
+
+    def test_unpin_already_unpinned_returns_noop(self, store):
+        mem = store.remember(
+            content="Not pinned",
+            kind=MemoryKind.FACT,
+            pinned=False,
+        )
+        result = store.unpin(mem.id)
+        assert result["status"] == "already_unpinned"
+
+    def test_unpin_logs_operation(self, populated_store):
+        results = populated_store.recall("integer cents")
+        pinned_mem = [r for r in results if r.pinned][0]
+
+        populated_store.unpin(pinned_mem.id)
+
+        op = populated_store.conn.execute(
+            "SELECT op, memory_id FROM ops_log WHERE op = 'unpin' AND memory_id = ?",
+            (pinned_mem.id,),
+        ).fetchone()
+        assert op is not None
+        assert op[0] == "unpin"
+
+
 class TestConsolidate:
     def test_consolidate_returns_candidates(self, populated_store):
         # Manually age some memories
@@ -633,3 +685,11 @@ class TestWriteTemplates:
             confidence=0.3,
         )
         assert mem.confidence == 0.3
+
+    def test_project_name_normalized_to_lowercase(self, store):
+        mem = store.remember(
+            content="Project names should be lowercase",
+            kind=MemoryKind.FACT,
+            project="MyProject",
+        )
+        assert mem.project == "myproject"

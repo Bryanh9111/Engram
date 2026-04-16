@@ -125,18 +125,21 @@ class TestProactiveRecall:
         results_after = engine.store.recall("integer cents")
         assert any(r.id == mem_id for r in results_after)
 
-    def test_compiled_origin_excluded(self, engine):
-        """origin='compiled' memories should not be proactively pushed."""
+    def test_compiled_origin_rejected_by_schema(self, engine):
+        """origin='compiled' must not enter memories main table (schema CHECK).
+
+        Debate 016/018: compiled origin belongs in compost_cache (v3.5),
+        not memories. Zero-LLM trust boundary is enforced at schema level.
+        """
+        import sqlite3
         from engram.model import MemoryOrigin
-        engine.store.remember(
-            content="Payments subsystem tends to use integer types",
-            kind=MemoryKind.CONSTRAINT,
-            path_scope="payments/*",
-            origin=MemoryOrigin.COMPILED,
-        )
-        results = engine.on_file_open("payments/handler.ts")
-        for r in results:
-            assert r.origin != MemoryOrigin.COMPILED
+        with pytest.raises(sqlite3.IntegrityError, match="origin"):
+            engine.store.remember(
+                content="Payments subsystem tends to use integer types",
+                kind=MemoryKind.CONSTRAINT,
+                path_scope="payments/*",
+                origin=MemoryOrigin.COMPILED,
+            )
 
     def test_suppress_hides_memory(self, engine):
         """Suppressed memories should not appear in proactive recall."""

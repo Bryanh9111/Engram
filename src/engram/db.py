@@ -6,24 +6,56 @@ import sqlite3
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS memories (
-    id           TEXT PRIMARY KEY,
-    content      TEXT NOT NULL,
-    summary      TEXT NOT NULL,
-    kind         TEXT NOT NULL,
-    origin       TEXT DEFAULT 'human',
-    project      TEXT,
-    path_scope   TEXT,
-    tags         TEXT DEFAULT '[]',
-    confidence   REAL DEFAULT 1.0,
+    id            TEXT PRIMARY KEY,
+    content       TEXT NOT NULL CHECK(length(content) <= 4000),
+    summary       TEXT NOT NULL,
+    kind          TEXT NOT NULL,
+    origin        TEXT DEFAULT 'human' CHECK(origin IN ('human','agent')),
+    project       TEXT,
+    path_scope    TEXT,
+    tags          TEXT DEFAULT '[]',
+    confidence    REAL DEFAULT 1.0,
     evidence_link TEXT,
-    status       TEXT DEFAULT 'active',
-    strength     REAL DEFAULT 0.5,
-    pinned       INTEGER DEFAULT 0,
-    created_at   TEXT NOT NULL,
-    accessed_at  TEXT,
+    status        TEXT DEFAULT 'active',
+    strength      REAL DEFAULT 0.5,
+    pinned        INTEGER DEFAULT 0,
+    scope         TEXT NOT NULL DEFAULT 'project' CHECK(scope IN ('project','global','meta')),
+    created_at    TEXT NOT NULL,
+    accessed_at   TEXT,
     last_verified TEXT,
-    access_count INTEGER DEFAULT 0
+    access_count  INTEGER DEFAULT 0,
+    CHECK(
+        (scope = 'project' AND project IS NOT NULL)
+        OR (scope IN ('global','meta') AND project IS NULL)
+    )
 );
+
+CREATE TABLE IF NOT EXISTS recall_miss_log (
+    query_norm   TEXT NOT NULL,
+    project      TEXT,
+    first_seen   TEXT NOT NULL DEFAULT (datetime('now')),
+    last_seen    TEXT NOT NULL DEFAULT (datetime('now')),
+    hits         INTEGER NOT NULL DEFAULT 1,
+    sample_query TEXT NOT NULL,
+    PRIMARY KEY (query_norm, project)
+);
+
+CREATE TABLE IF NOT EXISTS compost_cache (
+    cache_id        TEXT PRIMARY KEY,
+    project         TEXT,
+    prompt_hash     TEXT NOT NULL,
+    source_hash     TEXT NOT NULL,
+    content         TEXT NOT NULL,
+    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    ttl_expires_at  TEXT NOT NULL,
+    invalidated_at  TEXT,
+    origin          TEXT NOT NULL DEFAULT 'compiled' CHECK(origin = 'compiled'),
+    UNIQUE(project, prompt_hash)
+);
+
+CREATE INDEX IF NOT EXISTS idx_compost_cache_live
+    ON compost_cache(project, ttl_expires_at)
+    WHERE invalidated_at IS NULL;
 
 CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
     content,

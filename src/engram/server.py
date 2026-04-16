@@ -85,6 +85,10 @@ def _handle_forget(store: MemoryStore, memory_id: str) -> dict:
     return {"status": "forgotten", "id": memory_id}
 
 
+def _handle_unpin(store: MemoryStore, memory_id: str) -> dict:
+    return store.unpin(memory_id)
+
+
 def _handle_consolidate(
     store: MemoryStore,
     max_age_days: int = 90,
@@ -172,6 +176,11 @@ def create_server() -> FastMCP:
     def forget(memory_id: str) -> dict:
         """Soft-delete a memory by ID. Cannot forget pinned memories."""
         return _handle_forget(store, memory_id)
+
+    @mcp.tool()
+    def unpin(memory_id: str) -> dict:
+        """Unpin a memory so it can be forgotten or age-flagged. Use sparingly: prefer superseding via a new memory with supersedes tag. Single memory only, not batch."""
+        return _handle_unpin(store, memory_id)
 
     @mcp.tool()
     def consolidate(max_age_days: int = 90, min_strength: float = 0.2) -> dict:

@@ -7,7 +7,7 @@ import sqlite3
 from datetime import datetime, timezone
 
 from engram.db import init_db
-from engram.model import MemoryKind, MemoryObject, MemoryOrigin, MemoryStatus
+from engram.model import MemoryKind, MemoryObject, MemoryOrigin, MemoryScope, MemoryStatus
 
 
 class MemoryStore:
@@ -42,6 +42,8 @@ class MemoryStore:
     ) -> MemoryObject:
         """Write a memory. Deduplicates against existing similar content."""
         tags = tags or []
+        if project:
+            project = project.lower()
 
         # Dedup check via FTS5
         existing = self._find_duplicate(content, project)
@@ -68,9 +70,9 @@ class MemoryStore:
         self.conn.execute(
             """INSERT INTO memories
                (id, content, summary, kind, origin, project, path_scope, tags,
-                confidence, evidence_link, status, strength, pinned,
+                confidence, evidence_link, status, strength, pinned, scope,
                 created_at, accessed_at, last_verified, access_count)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 mem.id,
                 mem.content,
@@ -85,6 +87,7 @@ class MemoryStore:
                 mem.status.value,
                 mem.strength,
                 int(mem.pinned),
+                mem.scope.value,
                 mem.created_at.isoformat(),
                 None,
                 None,
@@ -122,7 +125,7 @@ class MemoryStore:
                 """SELECT m.id, m.content, m.summary, m.kind, m.origin, m.project,
                           m.path_scope, m.tags, m.confidence, m.evidence_link,
                           m.status, m.strength, m.pinned, m.created_at,
-                          m.accessed_at, m.last_verified, m.access_count
+                          m.accessed_at, m.last_verified, m.access_count, m.scope
                    FROM memories m
                    JOIN memories_fts fts ON m.rowid = fts.rowid
                    WHERE memories_fts MATCH ?
@@ -329,6 +332,28 @@ class MemoryStore:
         self._log_op("forget", memory_id)
         self.conn.commit()
 
+    def unpin(self, memory_id: str) -> dict:
+        """Unpin a memory, allowing it to be forgotten or age-flagged.
+
+        Use sparingly: prefer superseding via a new memory with origin=human
+        and tag supersedes-<old_id>. Use unpin only when the pinned memory
+        is truly obsolete (e.g., post-debate decision supersede, migration cleanup).
+        """
+        row = self.conn.execute(
+            "SELECT pinned FROM memories WHERE id = ?", (memory_id,)
+        ).fetchone()
+        if row is None:
+            raise ValueError(f"Memory {memory_id} not found")
+        if not row[0]:
+            return {"status": "already_unpinned", "id": memory_id}
+
+        self.conn.execute(
+            "UPDATE memories SET pinned = 0 WHERE id = ?", (memory_id,)
+        )
+        self._log_op("unpin", memory_id)
+        self.conn.commit()
+        return {"status": "unpinned", "id": memory_id}
+
     def consolidate_candidates(
         self, *, max_age_days: int = 90, min_strength: float = 0.2
     ) -> list[MemoryObject]:
@@ -337,7 +362,7 @@ class MemoryStore:
             """SELECT id, content, summary, kind, origin, project,
                       path_scope, tags, confidence, evidence_link,
                       status, strength, pinned, created_at,
-                      accessed_at, last_verified, access_count
+                      accessed_at, last_verified, access_count, scope
                FROM memories
                WHERE status = 'active'
                  AND pinned = 0
@@ -398,7 +423,7 @@ class MemoryStore:
             """SELECT id, content, summary, kind, origin, project,
                       path_scope, tags, confidence, evidence_link,
                       status, strength, pinned, created_at,
-                      accessed_at, last_verified, access_count
+                      accessed_at, last_verified, access_count, scope
                FROM memories ORDER BY created_at"""
         ).fetchall()
         memories = [self._row_to_memory(row) for row in rows]
@@ -600,6 +625,7 @@ created_at: {mem.created_at.isoformat()}
         return "\n".join(lines)
 
     def _row_to_memory(self, row: tuple) -> MemoryObject:
+        scope = MemoryScope(row[17]) if len(row) > 17 and row[17] else None
         return MemoryObject(
             id=row[0],
             content=row[1],
@@ -614,6 +640,7 @@ created_at: {mem.created_at.isoformat()}
             status=MemoryStatus(row[10]),
             strength=row[11],
             pinned=bool(row[12]),
+            scope=scope,
             created_at=datetime.fromisoformat(row[13]),
             accessed_at=datetime.fromisoformat(row[14]) if row[14] else None,
             last_verified=datetime.fromisoformat(row[15]) if row[15] else None,
