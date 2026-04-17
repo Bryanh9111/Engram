@@ -1,12 +1,12 @@
 # Engram — Persistent Memory System for AI Coding Agents
 
-[![Tests](https://img.shields.io/badge/tests-113_passing-brightgreen)](https://github.com/Bryanh9111/Engram)
+[![Tests](https://img.shields.io/badge/tests-214_passing-brightgreen)](https://github.com/Bryanh9111/Engram)
 [![Python](https://img.shields.io/badge/python-3.11+-blue)](https://www.python.org/)
-[![MCP](https://img.shields.io/badge/MCP-12_tools-purple)](https://modelcontextprotocol.io/)
+[![MCP](https://img.shields.io/badge/MCP-14_tools-purple)](https://modelcontextprotocol.io/)
 [![License](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
 [![Local First](https://img.shields.io/badge/local--first-SQLite-orange)](#)
 
-**Zero-LLM, local-first memory server for Claude Code and MCP-compatible AI agents.** Engram gives your AI agent persistent, cross-project memory with proactive recall — so it remembers constraints, decisions, and hard-won lessons across sessions. Built on SQLite + FTS5 with an MCP server that exposes 12 tools. No embeddings, no cloud, no API keys required.
+**Zero-LLM, local-first memory server for Claude Code and MCP-compatible AI agents.** Engram gives your AI agent persistent, cross-project memory with proactive recall — so it remembers constraints, decisions, and hard-won lessons across sessions. Built on SQLite + FTS5 with an MCP server that exposes 14 tools. No embeddings, no cloud, no API keys required.
 
 **Keywords:** MCP memory server, Claude Code memory, persistent AI agent memory, local LLM memory, proactive recall, SQLite agent memory, FTS5 knowledge base, MEMORY.md alternative
 
@@ -46,7 +46,7 @@ It exists because AI coding agents are smart but amnesic. Every new session star
 ```
               AI Agent (Claude Code / Gemma / etc.)
                     |
-            MCP Server (12 tools)
+            MCP Server (14 tools)
                     |
      .------.-------.-------.-------.
      |      |       |       |       |
@@ -91,7 +91,7 @@ Designed through five rounds of multi-model AI debate (Claude Opus, Sonnet 4.6, 
 
 ### Memory Model
 
-Five kinds, grounded in real coding scenarios:
+Six kinds, grounded in real coding and collaboration scenarios:
 
 | Kind | Lifetime | Example |
 |------|----------|---------|
@@ -100,16 +100,17 @@ Five kinds, grounded in real coding scenarios:
 | `procedure` | Version-controlled | "Integration tests: seed Redis, then worker, then API" |
 | `fact` | Short-lived | "UserSearchV2 is behind SEARCH_V2=1 flag" |
 | `guardrail` | Incident-driven | "Never parallelize these two migrations — caused prod failure" |
+| `insight` | Reserved for Compost synthesis (v3.4 Slice B) | "Users in 3 projects complain about checkout latency > 2s" |
 
 ### Origin Separation
 
 Inspired by [kepano](https://x.com/kepano) (Obsidian founder): AI-compiled knowledge must never contaminate human judgment.
 
-| Origin | Trust | Proactive Push |
-|--------|-------|----------------|
-| `human` | Highest — user explicitly wrote this | Yes |
-| `agent` | Medium — AI discovered during work | Yes |
-| `compiled` | Reference — AI-generated summaries | **No** — only returned on explicit recall |
+| Origin | Trust | Proactive Push | Stream Exported |
+|--------|-------|----------------|-----------------|
+| `human` | Highest — user explicitly wrote this | Yes | Yes |
+| `agent` | Medium — AI discovered during work | Yes | Yes |
+| `compost` | Synthesized cross-project insight from [Compost](https://github.com/Bryanh9111) — carries `source_trace` provenance and `expires_at` TTL | **No** — only returned on explicit recall | **Excluded by default** (prevents feedback loop when Compost re-ingests its own output) |
 
 ### Token Budget (measured at 290 memories)
 
@@ -216,7 +217,7 @@ If you see `✗ Failed to connect`, the server crashed on startup — run `uv ru
 
 ### Step 5: Restart Claude Code
 
-Fully quit and relaunch Claude Code. The Engram MCP server starts automatically on first connection. All 12 tools become available in every project.
+Fully quit and relaunch Claude Code. The Engram MCP server starts automatically on first connection. All 14 tools become available in every project.
 
 ### Step 6: Verify end-to-end
 
@@ -272,24 +273,26 @@ Claude Code calls these automatically via MCP when connected. You do not need to
 - **Database location** — Default is `~/.engram/engram.db`. Override with `export ENGRAM_DB=/path/to/custom.db`
 - **Backup** — The database is a single SQLite file. Copy `~/.engram/engram.db` (plus `.db-wal` and `.db-shm` if present) to back up. Restore by copying back.
 
-### MCP Tools (12)
+### MCP Tools (14)
 
 Once connected, Claude Code can call these tools directly:
 
 | Tool | Purpose |
 |------|---------|
-| `remember` | Store a memory (kind + origin) |
+| `remember` | Store a memory (kind + origin + optional source_trace/expires_at/scope) |
 | `recall` | Search with budget control (`tiny`/`normal`/`deep`), ranked by effective_score |
 | `proactive` | Get guardrails for a file path |
 | `forget` | Soft-delete a memory (status → obsolete) |
 | `resolve` | Mark as handled (status → resolved, stops proactive but stays searchable) |
+| `unpin` | Remove a pinned memory's pin (single memory; prefer supersede via new memory) |
 | `suppress` | Temporarily silence a proactive memory |
 | `compile` | Compile all memories for a project into structured Markdown (zero LLM) |
 | `consolidate` | List archive candidates |
 | `health` | Check for missing evidence, orphans, stale claims |
 | `micro_index` | Compact index for cold-start (~200 tokens) |
 | `stats` | Memory statistics |
-| `export` | Export to JSONL or Markdown |
+| `stream_for_compost` | Stream entries to [Compost](https://github.com/Bryanh9111) for cross-project synthesis (excludes `origin=compost` by default) |
+| `invalidate_compost_fact` | Mark insights as obsolete when their upstream Compost fact changes (Compost → Engram channel) |
 
 ## Memory Cards
 
@@ -346,7 +349,7 @@ SQLite is the runtime source of truth. JSONL is the migration format. Markdown i
 
 ### What is an MCP memory server?
 
-An **MCP (Model Context Protocol) memory server** is a standardized way for AI agents like Claude Code to access persistent memory across sessions. MCP is Anthropic's open protocol for connecting LLMs to external tools and data sources. Engram implements an MCP server that exposes 12 memory operations (`remember`, `recall`, `proactive`, `forget`, `resolve`, `compile`, etc.) that any MCP-compatible AI agent can call.
+An **MCP (Model Context Protocol) memory server** is a standardized way for AI agents like Claude Code to access persistent memory across sessions. MCP is Anthropic's open protocol for connecting LLMs to external tools and data sources. Engram implements an MCP server that exposes 14 memory operations (`remember`, `recall`, `proactive`, `forget`, `resolve`, `compile`, etc.) that any MCP-compatible AI agent can call.
 
 ### How is Engram different from MEMORY.md?
 
@@ -378,7 +381,7 @@ The entire database is a single SQLite file at `~/.engram/engram.db`. Copy that 
 
 ### Is Engram production-ready?
 
-Engram v3.1 has 113 tests passing and has been running in production across 10 real projects for weeks. The core design has been validated through 5 rounds of structured multi-model debate and stress-tested against 16 reference projects (Karpathy's LLM Wiki, Anthropic Auto-Dream, Mem0, MemGPT, Zep, Letta, Ombre Brain, CatchMe, SocratiCode, Supermemory, and more). That said, it's a personal tool by a solo developer — use at your own risk in commercial settings.
+Engram v3.4 has 214 tests passing and has been running in production across 10 real projects for weeks. The core design has been validated through 5 rounds of structured multi-model debate and stress-tested against 16 reference projects (Karpathy's LLM Wiki, Anthropic Auto-Dream, Mem0, MemGPT, Zep, Letta, Ombre Brain, CatchMe, SocratiCode, Supermemory, and more). v3.4 adds a bidirectional channel to [Compost](https://github.com/Bryanh9111) for cross-project synthesis. That said, it's a personal tool by a solo developer — use at your own risk in commercial settings.
 
 ### Can I use Engram for personal knowledge management (not coding)?
 
@@ -389,7 +392,7 @@ Engram's storage and retrieval layer is domain-agnostic, but the `proactive()` t
 - Python 3.11+ / [uv](https://github.com/astral-sh/uv)
 - SQLite + FTS5 (WAL mode) — zero external dependencies
 - [MCP](https://modelcontextprotocol.io/) protocol via FastMCP
-- 113 tests, ~1,500 lines of code
+- 214 tests, ~2,500 lines of code
 
 ## Roadmap
 
@@ -398,7 +401,13 @@ Engram's storage and retrieval layer is domain-agnostic, but the `proactive()` t
 | **v2** | — | 5 kinds, 3 origins, proactive recall, health checks, memory cards, export |
 | **v2.1** | — | Ops log, write templates, stale claims detection, L0-L3 budget |
 | **v3** | — | Resolved status, effective_score ranking, dashboard, compile, 12 MCP tools |
-| **v3.1** (current) | — | Memory lint (kind-TTL staleness), Claude Code hooks integration |
+| **v3.1** | — | Memory lint (kind-TTL staleness), Claude Code hooks integration |
+| **v3.2** | — | Real token measurements + health summary mode (99% token reduction) |
+| **v3.3 Slice A** | — | Schema hardening + unpin API + scope tri-value enum |
+| **v3.4 Slice B Phase 1** | — | Compost schema foundation (insight kind, source_trace, expires_at, compost_insight_sources) |
+| **v3.4 Slice B Phase 2 P0** | — | API surface invariant test + MemoryOrigin enum realignment (HUMAN/AGENT/COMPOST) |
+| **v3.4 Slice B Phase 2 S2** (current) | — | Bidirectional Compost channel: `stream_for_compost` + `invalidate_compost_fact` + CLI `export-stream` |
+| **Phase 3** | data-driven | Recall/proactive tier policy, GC daemon (30-day grace), extended lint, ARCHITECTURE.md |
 | **v4** | 500 memories | LLM-powered compile with Planner→Worker→Critic pattern (ToFu-inspired) |
 | **v4.1** | time-sensitive memories >10% | Temporal expiry (degrade, not hide) |
 | **v5** | FTS5 miss evidence | Multi-path recall + LLM reranking |
