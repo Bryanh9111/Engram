@@ -46,8 +46,13 @@ def _handle_remember(
     evidence_link: str | None = None,
     pinned: bool = False,
     scope: str | None = None,
+    source_trace: dict | None = None,
+    expires_at: str | None = None,
 ) -> dict:
+    from datetime import datetime
+
     from engram.model import MemoryScope
+
     mem = store.remember(
         content=content,
         kind=MemoryKind(kind),
@@ -59,6 +64,8 @@ def _handle_remember(
         evidence_link=evidence_link,
         pinned=pinned,
         scope=MemoryScope(scope) if scope else None,
+        source_trace=source_trace,
+        expires_at=datetime.fromisoformat(expires_at) if expires_at else None,
     )
     return _memory_to_dict(mem)
 
@@ -161,11 +168,14 @@ def create_server() -> FastMCP:
         evidence_link: str | None = None,
         pinned: bool = False,
         scope: str | None = None,
+        source_trace: dict | None = None,
+        expires_at: str | None = None,
     ) -> dict:
-        """Store a memory. Kinds: constraint, decision, procedure, fact, guardrail, insight. Origins: human, agent, compost. Scope: project (default when project given), global (cross-project knowledge, requires project=None), meta (about user/agent, requires project=None). If scope omitted, inferred from project."""
+        """Store a memory. Kinds: constraint, decision, procedure, fact, guardrail, insight. Origins: human, agent, compost. Scope: project (default when project given), global (cross-project knowledge, requires project=None), meta (about user/agent, requires project=None). If scope omitted, inferred from project. source_trace (JSON provenance) and expires_at (ISO-8601 TTL) are required for origin=compost."""
         return _handle_remember(
             store, content, kind, origin, project, path_scope, tags,
             confidence, evidence_link, pinned, scope,
+            source_trace, expires_at,
         )
 
     @mcp.tool()

@@ -38,16 +38,31 @@ def _memory_to_dict(mem) -> dict:
 
 
 def cmd_add(args, store: MemoryStore) -> None:
-    from engram.model import MemoryScope
+    from datetime import datetime
+
+    from engram.model import MemoryOrigin, MemoryScope
+
+    source_trace = None
+    if args.source_trace:
+        source_trace = json.loads(args.source_trace)
+
+    expires_at = None
+    if args.expires_at:
+        expires_at = datetime.fromisoformat(args.expires_at)
+
     mem = store.remember(
         content=args.content,
         kind=MemoryKind(args.kind),
+        origin=MemoryOrigin(args.origin),
         project=args.project,
         path_scope=args.path_scope,
-        tags=args.tag or [],
+        tags=args.tags or [],
         confidence=args.confidence,
+        evidence_link=args.evidence_link,
         pinned=args.pinned,
         scope=MemoryScope(args.scope) if args.scope else None,
+        source_trace=source_trace,
+        expires_at=expires_at,
     )
     print(f"Remembered [{mem.kind.value}] {mem.id}: {mem.summary}")
 
@@ -218,7 +233,8 @@ def cmd_dashboard(args, store: MemoryStore) -> None:
             print(f"  [{row[2]}] {row[1][:60]} ({row[3]} accesses)")
 
 
-def main(argv: list[str] | None = None) -> None:
+def build_parser() -> argparse.ArgumentParser:
+    """Build the engram CLI parser. Exposed for testing (API surface invariant)."""
     parser = argparse.ArgumentParser(prog="engram", description="Engram memory system")
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -226,13 +242,22 @@ def main(argv: list[str] | None = None) -> None:
     p_add = sub.add_parser("add", help="Remember something")
     p_add.add_argument("content", help="Memory content")
     p_add.add_argument("--kind", required=True, choices=[k.value for k in MemoryKind])
+    p_add.add_argument("--origin", choices=["human", "agent", "compost"],
+                       default="human",
+                       help="Memory origin (default: human)")
     p_add.add_argument("--project")
     p_add.add_argument("--path-scope")
-    p_add.add_argument("--tag", action="append")
+    p_add.add_argument("--tag", action="append", dest="tags")
     p_add.add_argument("--confidence", type=float, default=1.0)
+    p_add.add_argument("--evidence-link",
+                       help="URL/path supporting the memory (recommended for guardrails)")
     p_add.add_argument("--pinned", action="store_true")
     p_add.add_argument("--scope", choices=["project", "global", "meta"],
                        help="Scope (default: inferred from --project)")
+    p_add.add_argument("--source-trace",
+                       help="JSON provenance blob (required for origin=compost)")
+    p_add.add_argument("--expires-at",
+                       help="ISO-8601 TTL timestamp (required for origin=compost)")
 
     # search
     p_search = sub.add_parser("search", help="Recall memories")
@@ -266,6 +291,11 @@ def main(argv: list[str] | None = None) -> None:
     # lint
     sub.add_parser("lint", help="Full health check (missing evidence + orphans + stale + kind TTL)")
 
+    return parser
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = build_parser()
     args = parser.parse_args(argv)
 
     db_path = _get_db_path()

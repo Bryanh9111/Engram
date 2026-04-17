@@ -267,6 +267,58 @@ class TestSchemaInvariants:
         assert "exp" not in ids
 
 
+class TestEnumSchemaAlignment:
+    """Python enums that mirror DB CHECK constraints must stay in lockstep.
+
+    If the CHECK list changes, the enum must change with it (and vice versa),
+    otherwise callers hit either a DB IntegrityError (enum value DB rejects)
+    or ValueError (DB value the enum doesn't have).
+    """
+
+    @pytest.fixture
+    def conn(self, tmp_path):
+        from engram.db import init_db
+        return init_db(str(tmp_path / "schema_test.db"))
+
+    def test_memory_origin_enum_matches_memories_check(self, conn):
+        from engram.model import MemoryOrigin
+
+        enum_values = {o.value for o in MemoryOrigin}
+
+        # Exercise every enum value against the CHECK to prove it's accepted.
+        for val in enum_values:
+            conn.execute(
+                """INSERT INTO memories
+                   (id, content, summary, kind, origin, project, tags, status,
+                    strength, pinned, scope, source_trace, expires_at, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    f"enum_{val}",
+                    "x", "s",
+                    "insight" if val == "compost" else "fact",
+                    val,
+                    None if val == "compost" else "test",
+                    "[]", "active", 0.5, 0,
+                    "global" if val == "compost" else "project",
+                    '{"fact_ids":["f"]}' if val == "compost" else None,
+                    "2099-01-01" if val == "compost" else None,
+                    "2026-04-16",
+                ),
+            )
+
+        # Exercise a value outside the enum against the CHECK to prove nothing
+        # slips through unnoticed. 'compiled' is the historical leftover.
+        with pytest.raises(sqlite3.IntegrityError, match="origin"):
+            conn.execute(
+                """INSERT INTO memories
+                   (id, content, summary, kind, origin, project, tags, status,
+                    strength, pinned, scope, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                ("leftover", "x", "s", "fact", "compiled", "test",
+                 "[]", "active", 0.5, 0, "project", "2026-04-16"),
+            )
+
+
 class TestNoEmbeddingColumn:
     """Debate 016 C6: schema禁 embedding 列 until v3.5+ re-evaluation."""
 

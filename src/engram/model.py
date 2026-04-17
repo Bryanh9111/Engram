@@ -27,7 +27,7 @@ class MemoryStatus(str, Enum):
 class MemoryOrigin(str, Enum):
     HUMAN = "human"
     AGENT = "agent"
-    COMPILED = "compiled"
+    COMPOST = "compost"  # Cross-project synthesis from Compost; never user-written directly
 
 
 class MemoryScope(str, Enum):

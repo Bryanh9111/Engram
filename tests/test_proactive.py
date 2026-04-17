@@ -130,15 +130,19 @@ class TestProactiveRecall:
 
         Debate 016/018: compiled origin belongs in compost_cache (v3.5),
         not memories. Zero-LLM trust boundary is enforced at schema level.
+        The Python MemoryOrigin enum does not expose COMPILED, so we drive
+        the raw SQL path here to prove the DB-level guard still holds even
+        if a caller smuggles the string directly.
         """
         import sqlite3
-        from engram.model import MemoryOrigin
         with pytest.raises(sqlite3.IntegrityError, match="origin"):
-            engine.store.remember(
-                content="Payments subsystem tends to use integer types",
-                kind=MemoryKind.CONSTRAINT,
-                path_scope="payments/*",
-                origin=MemoryOrigin.COMPILED,
+            engine.store.conn.execute(
+                """INSERT INTO memories
+                   (id, content, summary, kind, origin, project, tags, status,
+                    strength, pinned, scope, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                ("smuggle", "x", "s", "constraint", "compiled", "test",
+                 "[]", "active", 0.5, 0, "project", "2026-04-16"),
             )
 
     def test_suppress_hides_memory(self, engine):

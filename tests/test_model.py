@@ -86,7 +86,7 @@ class TestMemoryObject:
         assert origins == {
             MemoryOrigin.HUMAN,
             MemoryOrigin.AGENT,
-            MemoryOrigin.COMPILED,
+            MemoryOrigin.COMPOST,
         }
 
     def test_default_origin_is_human(self):
