@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Iterator
 from datetime import datetime, timezone
 
 from engram.db import init_db
@@ -102,9 +103,29 @@ class MemoryStore:
                 0,
             ),
         )
+        self._map_insight_sources(mem)
         self._log_op("remember", mem.id, mem.kind.value, mem.project)
         self.conn.commit()
         return mem
+
+    def _map_insight_sources(self, mem: MemoryObject) -> None:
+        """Index Compost fact provenance for O(log n) invalidation lookup.
+
+        Only fires when kind=insight; other kinds never populate the table
+        even if source_trace happens to carry compost_fact_ids.
+        """
+        if mem.kind != MemoryKind.INSIGHT:
+            return
+        if not mem.source_trace:
+            return
+        fact_ids = mem.source_trace.get("compost_fact_ids") or []
+        if not fact_ids:
+            return
+        self.conn.executemany(
+            """INSERT OR IGNORE INTO compost_insight_sources
+               (memory_id, fact_id) VALUES (?, ?)""",
+            [(mem.id, fid) for fid in fact_ids],
+        )
 
     @staticmethod
     def _apply_kind_rules(mem: MemoryObject) -> float:
@@ -611,6 +632,74 @@ created_at: {mem.created_at.isoformat()}
                     })
                     break  # one match is enough
         return stale
+
+    def stream_entries(
+        self,
+        *,
+        since: datetime | None = None,
+        kinds: list[MemoryKind] | None = None,
+        project: str | None = None,
+        include_compost: bool = False,
+    ) -> Iterator[MemoryObject]:
+        """Stream memories to external ingestion consumers (primarily Compost).
+
+        Yields MemoryObject in created_at ASC order, lazily (SQLite cursor
+        iteration — no list materialization). Contract per debate 019 Q4 +
+        engram-integration-contract.md:
+
+            since:           only entries with created_at > since
+            kinds:           restrict to these kinds (union); None = all
+            project:         restrict to this project; None = all projects
+            include_compost: by default origin='compost' is excluded to
+                             prevent Compost from re-ingesting its own
+                             insights as new observations (Q7 feedback-loop
+                             prevention). Only flip True for admin/debug.
+
+        Status filter: include 'active' and 'resolved', exclude 'obsolete'.
+        Expiry filter: entries past expires_at are never yielded (mirrors
+        memory_scores view behavior).
+        """
+        where: list[str] = [
+            "status IN ('active', 'resolved')",
+            "(expires_at IS NULL OR julianday(expires_at) > julianday('now'))",
+        ]
+        params: list = []
+
+        if since is not None:
+            where.append("julianday(created_at) > julianday(?)")
+            params.append(since.isoformat())
+
+        if kinds:
+            placeholders = ",".join("?" * len(kinds))
+            where.append(f"kind IN ({placeholders})")
+            params.extend(k.value for k in kinds)
+
+        if project is not None:
+            where.append("project = ?")
+            params.append(project)
+
+        if not include_compost:
+            where.append("origin != 'compost'")
+
+        sql = f"""
+            SELECT id, content, summary, kind, origin, project,
+                   path_scope, tags, confidence, evidence_link,
+                   status, strength, pinned, created_at,
+                   accessed_at, last_verified, access_count, scope,
+                   source_trace, expires_at
+            FROM memories
+            WHERE {' AND '.join(where)}
+            ORDER BY created_at ASC, id ASC
+        """
+        # Execute on a dedicated cursor so callers can interleave other
+        # reads on self.conn without exhausting this stream prematurely.
+        cursor = self.conn.cursor()
+        cursor.execute(sql, params)
+        try:
+            for row in cursor:
+                yield self._row_to_memory(row)
+        finally:
+            cursor.close()
 
     def micro_index(self) -> str:
         """Generate a compact index for AI agent cold-start (~200 tokens)."""
