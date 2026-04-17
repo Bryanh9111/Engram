@@ -171,6 +171,22 @@ def cmd_lint(args, store: MemoryStore) -> None:
         print("\nAll clean.")
 
 
+def cmd_export_stream(args, store: MemoryStore) -> None:
+    """Emit JSONL (contract shape) to stdout for Compost batch ingestion."""
+    from engram.server import _handle_stream_for_compost
+
+    entries = _handle_stream_for_compost(
+        store,
+        since=args.since,
+        kinds=args.kinds,
+        project=args.project,
+        include_compost=args.include_compost,
+        limit=args.limit,
+    )
+    for entry in entries:
+        print(json.dumps(entry))
+
+
 def cmd_dashboard(args, store: MemoryStore) -> None:
     s = store.stats()
     pinned = store.conn.execute(
@@ -291,6 +307,27 @@ def build_parser() -> argparse.ArgumentParser:
     # lint
     sub.add_parser("lint", help="Full health check (missing evidence + orphans + stale + kind TTL)")
 
+    # export-stream (Compost batch ingest, JSONL to stdout)
+    p_export = sub.add_parser(
+        "export-stream",
+        help="Emit memories as JSONL for Compost ingest (contract shape)",
+    )
+    p_export.add_argument("--since", help="ISO-8601 timestamp; emit entries strictly after")
+    p_export.add_argument(
+        "--kinds", action="append",
+        choices=[k.value for k in MemoryKind],
+        help="Restrict to these kinds; repeatable",
+    )
+    p_export.add_argument("--project", help="Restrict to this project")
+    p_export.add_argument(
+        "--include-compost", action="store_true",
+        help="Include origin=compost entries (off by default to avoid feedback loop)",
+    )
+    p_export.add_argument(
+        "--limit", type=int, default=1000,
+        help="Cap output rows (default: 1000)",
+    )
+
     return parser
 
 
@@ -306,7 +343,8 @@ def main(argv: list[str] | None = None) -> None:
         {"add": cmd_add, "search": cmd_search, "forget": cmd_forget,
          "unpin": cmd_unpin,
          "candidates": cmd_candidates, "stats": cmd_stats,
-         "dashboard": cmd_dashboard, "lint": cmd_lint}[args.command](args, store)
+         "dashboard": cmd_dashboard, "lint": cmd_lint,
+         "export-stream": cmd_export_stream}[args.command](args, store)
     finally:
         store.close()
 

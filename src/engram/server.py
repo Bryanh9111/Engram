@@ -141,6 +141,93 @@ def _handle_micro_index(store: MemoryStore) -> str:
     return store.micro_index()
 
 
+def _memory_to_compost_dict(mem) -> dict:
+    """Project MemoryObject to the engram-integration-contract shape.
+
+    Contract keys (exactly): memory_id, kind, content, project, scope,
+    created_at, updated_at, tags, origin.
+    """
+    return {
+        "memory_id": mem.id,
+        "kind": mem.kind.value,
+        "content": mem.content,
+        "project": mem.project,
+        "scope": mem.scope.value if mem.scope else None,
+        "created_at": mem.created_at.isoformat(),
+        # Append-only content model: there is no separate update path, so
+        # updated_at tracks created_at. If a future edit API lands, point
+        # this at the real column.
+        "updated_at": mem.created_at.isoformat(),
+        "tags": mem.tags,
+        "origin": mem.origin.value,
+    }
+
+
+def _handle_invalidate_compost_fact(
+    store: MemoryStore,
+    fact_ids: list[str],
+) -> dict:
+    """Mark insights resting on the given Compost fact_ids as obsolete.
+
+    Reverse-lookup via compost_insight_sources; soft-delete; audit.
+    Physical purge with 30-day grace is a Phase 3 GC concern.
+    """
+    if not fact_ids:
+        return {"invalidated_memory_ids": [], "count": 0}
+
+    placeholders = ",".join("?" * len(fact_ids))
+    rows = store.conn.execute(
+        f"""SELECT DISTINCT memory_id FROM compost_insight_sources
+            WHERE fact_id IN ({placeholders})""",
+        fact_ids,
+    ).fetchall()
+    memory_ids = [r[0] for r in rows]
+    if not memory_ids:
+        return {"invalidated_memory_ids": [], "count": 0}
+
+    mem_placeholders = ",".join("?" * len(memory_ids))
+    store.conn.execute(
+        f"""UPDATE memories SET status = 'obsolete'
+            WHERE id IN ({mem_placeholders})""",
+        memory_ids,
+    )
+    detail = f"fact_ids={','.join(fact_ids)}"
+    for mid in memory_ids:
+        store._log_op("invalidate_compost_fact", mid, detail=detail)
+    store.conn.commit()
+
+    return {"invalidated_memory_ids": memory_ids, "count": len(memory_ids)}
+
+
+def _handle_stream_for_compost(
+    store: MemoryStore,
+    since: str | None = None,
+    kinds: list[str] | None = None,
+    project: str | None = None,
+    include_compost: bool = False,
+    limit: int = 1000,
+) -> list[dict]:
+    """Stream entries in contract shape, bounded by `limit` for MCP transport."""
+    from datetime import datetime
+
+    since_dt = datetime.fromisoformat(since) if since else None
+    kinds_enum = [MemoryKind(k) for k in kinds] if kinds else None
+
+    results: list[dict] = []
+    if limit <= 0:
+        return results
+    for mem in store.stream_entries(
+        since=since_dt,
+        kinds=kinds_enum,
+        project=project,
+        include_compost=include_compost,
+    ):
+        results.append(_memory_to_compost_dict(mem))
+        if len(results) >= limit:
+            break
+    return results
+
+
 # --- MCP Server ---
 
 
@@ -234,6 +321,45 @@ def create_server() -> FastMCP:
     def compile(project: str) -> str:
         """Compile all memories for a project into structured Markdown overview. No LLM cost."""
         return store.compile(project)
+
+    @mcp.tool()
+    def stream_for_compost(
+        since: str | None = None,
+        kinds: list[str] | None = None,
+        project: str | None = None,
+        include_compost: bool = False,
+        limit: int = 1000,
+    ) -> list[dict]:
+        """Stream Engram memories for Compost ingestion.
+
+        Each entry has contract-shape keys: memory_id, kind, content,
+        project, scope, created_at, updated_at, tags, origin.
+
+        Filters: since (ISO-8601 timestamp, strict >), kinds (union of
+        kind strings), project. Results are capped at `limit` (default
+        1000) so MCP transport stays bounded — Compost polls in rounds.
+
+        origin='compost' entries excluded by default to prevent Compost
+        re-ingesting its own insights (debate 019 Q7). Set
+        include_compost=True only for admin/debug.
+        """
+        return _handle_stream_for_compost(
+            store, since, kinds, project, include_compost, limit,
+        )
+
+    @mcp.tool()
+    def invalidate_compost_fact(fact_ids: list[str]) -> dict:
+        """Mark insight memories resting on these Compost fact_ids as obsolete.
+
+        Called by Compost when an underlying fact is superseded or changes.
+        Engram reverse-looks-up via compost_insight_sources and soft-deletes
+        matching insights regardless of pinned state (Compost is the
+        authority on insight freshness). Physical purge happens later via
+        the Phase 3 GC daemon with a 30-day grace window.
+
+        Returns: {invalidated_memory_ids, count}
+        """
+        return _handle_invalidate_compost_fact(store, fact_ids)
 
     @mcp.tool()
     def resolve(memory_id: str) -> dict:
