@@ -11,6 +11,11 @@ from engram.db import init_db
 from engram.model import MemoryKind, MemoryObject, MemoryOrigin, MemoryScope, MemoryStatus
 
 
+_NOT_EXPIRED_SQL = (
+    "(expires_at IS NULL OR julianday(expires_at) > julianday('now'))"
+)
+
+
 class MemoryStore:
     def __init__(self, db_path: str = "engram.db"):
         self.conn = init_db(db_path)
@@ -264,7 +269,10 @@ class MemoryStore:
                        m.source_trace, m.expires_at
                 FROM memories m
                 JOIN memories_fts fts ON m.rowid = fts.rowid
-                WHERE memories_fts MATCH ? AND m.status != 'obsolete' {where_sql}
+                WHERE memories_fts MATCH ?
+                  AND m.status != 'obsolete'
+                  AND (m.expires_at IS NULL OR julianday(m.expires_at) > julianday('now'))
+                  {where_sql}
                 ORDER BY rank
                 LIMIT ?
             """
@@ -309,7 +317,9 @@ class MemoryStore:
                    m.source_trace, m.expires_at
             FROM memories m
             LEFT JOIN memory_scores ms ON m.id = ms.id
-            WHERE m.status = 'active' {where_sql}
+            WHERE m.status = 'active'
+              AND (m.expires_at IS NULL OR julianday(m.expires_at) > julianday('now'))
+              {where_sql}
             ORDER BY COALESCE(ms.effective_score, 0.5) DESC
             LIMIT ?
         """
@@ -401,6 +411,7 @@ class MemoryStore:
                  AND pinned = 0
                  AND strength < ?
                  AND julianday('now') - julianday(created_at) > ?
+                 AND (expires_at IS NULL OR julianday(expires_at) > julianday('now'))
                ORDER BY strength ASC, created_at ASC""",
             (min_strength, max_age_days),
         ).fetchall()
@@ -410,12 +421,15 @@ class MemoryStore:
         """Return memory store statistics."""
         total = self.conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
         active = self.conn.execute(
-            "SELECT COUNT(*) FROM memories WHERE status = 'active'"
+            f"""SELECT COUNT(*) FROM memories
+               WHERE status = 'active' AND {_NOT_EXPIRED_SQL}"""
         ).fetchone()[0]
 
         by_kind: dict[str, int] = {}
         for row in self.conn.execute(
-            "SELECT kind, COUNT(*) FROM memories WHERE status = 'active' GROUP BY kind"
+            f"""SELECT kind, COUNT(*) FROM memories
+               WHERE status = 'active' AND {_NOT_EXPIRED_SQL}
+               GROUP BY kind"""
         ).fetchall():
             by_kind[row[0]] = row[1]
 
@@ -424,9 +438,11 @@ class MemoryStore:
     def compile(self, project: str) -> str:
         """Compile all active memories for a project into structured Markdown. No LLM."""
         rows = self.conn.execute(
-            """SELECT kind, content, summary, pinned, evidence_link
+            f"""SELECT kind, content, summary, pinned, evidence_link
                FROM memories
-               WHERE status IN ('active', 'resolved') AND project = ?
+               WHERE status IN ('active', 'resolved')
+                 AND project = ?
+                 AND {_NOT_EXPIRED_SQL}
                ORDER BY kind, pinned DESC, confidence DESC""",
             (project,),
         ).fetchall()
@@ -704,7 +720,8 @@ created_at: {mem.created_at.isoformat()}
     def micro_index(self) -> str:
         """Generate a compact index for AI agent cold-start (~200 tokens)."""
         total = self.conn.execute(
-            "SELECT COUNT(*) FROM memories WHERE status = 'active'"
+            f"""SELECT COUNT(*) FROM memories
+               WHERE status = 'active' AND {_NOT_EXPIRED_SQL}"""
         ).fetchone()[0]
 
         if total == 0:
@@ -714,13 +731,18 @@ created_at: {mem.created_at.isoformat()}
 
         # By kind
         for row in self.conn.execute(
-            "SELECT kind, COUNT(*) FROM memories WHERE status = 'active' GROUP BY kind ORDER BY COUNT(*) DESC"
+            f"""SELECT kind, COUNT(*) FROM memories
+               WHERE status = 'active' AND {_NOT_EXPIRED_SQL}
+               GROUP BY kind ORDER BY COUNT(*) DESC"""
         ).fetchall():
             lines.append(f"  {row[0]}: {row[1]}")
 
         # By project
         for row in self.conn.execute(
-            "SELECT project, COUNT(*) FROM memories WHERE status = 'active' AND project IS NOT NULL GROUP BY project ORDER BY COUNT(*) DESC LIMIT 10"
+            f"""SELECT project, COUNT(*) FROM memories
+               WHERE status = 'active' AND project IS NOT NULL
+                 AND {_NOT_EXPIRED_SQL}
+               GROUP BY project ORDER BY COUNT(*) DESC LIMIT 10"""
         ).fetchall():
             lines.append(f"  [{row[0]}] {row[1]}")
 

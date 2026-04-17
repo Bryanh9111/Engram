@@ -267,6 +267,41 @@ class TestSchemaInvariants:
         assert "exp" not in ids
 
 
+class TestMCPDocStringAlignment:
+    """MCP server instructions + tool docstrings must not reference enum
+    values that no longer exist. Discovered in debate 020: server.py had
+    three stale references to 'compiled' origin (removed from MemoryOrigin
+    in v3.4 P0) that silently told every MCP client the wrong origin set."""
+
+    def test_mcp_instructions_and_docstrings_do_not_mention_dead_origins(self):
+        import re
+        from pathlib import Path
+
+        from engram.model import MemoryOrigin
+
+        server_src = (Path(__file__).parent.parent / "src" / "engram" / "server.py").read_text()
+        proactive_src = (Path(__file__).parent.parent / "src" / "engram" / "proactive.py").read_text()
+
+        live_origins = {o.value for o in MemoryOrigin}
+        # Historical values that used to exist in MemoryOrigin but were
+        # removed. If any of these appear in user-facing text, it's drift.
+        dead_origins = {"compiled"}
+
+        for src_name, src in (("server.py", server_src), ("proactive.py", proactive_src)):
+            for dead in dead_origins:
+                # Find occurrences in string contexts (docstrings / string literals).
+                # Bare identifiers (variable names etc.) don't count — only quoted.
+                pattern = re.compile(rf"""['"](.*?{dead}.*?)['"]""", re.DOTALL)
+                matches = pattern.findall(src)
+                assert not matches, (
+                    f"{src_name} still mentions dead origin '{dead}' in a "
+                    f"string context: {matches[0][:120]!r}. MemoryOrigin "
+                    f"current values are {sorted(live_origins)}. "
+                    f"Every MCP client reading these docstrings gets a "
+                    f"wrong mental model of the origin set."
+                )
+
+
 class TestEnumSchemaAlignment:
     """Python enums that mirror DB CHECK constraints must stay in lockstep.
 

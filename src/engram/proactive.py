@@ -40,21 +40,25 @@ class ProactiveRecallEngine:
         """Surface relevant guardrails when a file is opened.
 
         Returns at most 3 memories that are:
-        - constraint, guardrail, or procedure (not fact/decision)
+        - constraint, guardrail, or procedure (not fact/decision/insight)
         - confidence >= 0.7
         - path_scope matches the opened file
+        - origin in (human, agent) — Compost-synthesized insights never
+          enter proactive push (they live in recall only, per debate 019 Q5)
+        - not past expires_at
         """
-        # Get all active memories with a path_scope
         rows = self.store.conn.execute(
             """SELECT id, content, summary, kind, origin, project,
                       path_scope, tags, confidence, evidence_link,
                       status, strength, pinned, created_at,
-                      accessed_at, last_verified, access_count
+                      accessed_at, last_verified, access_count, scope,
+                      source_trace, expires_at
                FROM memories
                WHERE status = 'active'
                  AND path_scope IS NOT NULL
                  AND confidence >= ?
-                 AND origin != 'compiled'""",
+                 AND origin != 'compost'
+                 AND (expires_at IS NULL OR julianday(expires_at) > julianday('now'))""",
             (_MIN_CONFIDENCE,),
         ).fetchall()
 

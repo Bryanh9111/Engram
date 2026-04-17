@@ -241,7 +241,7 @@ def create_server() -> FastMCP:
     store = MemoryStore(db_path)
     proactive_engine = ProactiveRecallEngine(store)
 
-    mcp = FastMCP("engram", instructions="Engram: AI agent memory system. Use remember() to store constraints, decisions, procedures, facts, guardrails. Use recall(budget='tiny') for compact cards. Use proactive() before editing files. Origins: human (user-written), agent (AI-discovered), compiled (AI-summarized).")
+    mcp = FastMCP("engram", instructions="Engram: AI agent memory system. Use remember() to store constraints, decisions, procedures, facts, guardrails, or insights. Use recall(budget='tiny') for compact cards. Use proactive() before editing files. Origins: human (user-written, highest trust), agent (AI-discovered during work), compost (Compost-synthesized cross-project insight, requires kind=insight + source_trace + expires_at).")
 
     @mcp.tool()
     def remember(
@@ -273,7 +273,7 @@ def create_server() -> FastMCP:
         limit: int = 10,
         budget: str = "normal",
     ) -> list[dict]:
-        """Search memories. budget: tiny (compact cards ~50tok each), normal (full), deep (with compiled)."""
+        """Search memories ranked by effective_score. budget: tiny (compact cards ~50tok each), normal (full objects), deep (limit>=50, expanded results)."""
         return _handle_recall(store, query, project, kind, limit=limit, budget=budget)
 
     @mcp.tool()
@@ -293,7 +293,7 @@ def create_server() -> FastMCP:
 
     @mcp.tool()
     def proactive(file_path: str) -> list[dict]:
-        """Get relevant guardrails/constraints for a file. Only returns human/agent origin, never compiled."""
+        """Get relevant guardrails/constraints/procedures for a file by path_scope match. Only returns origin in (human, agent) and confidence>=0.7; Compost-synthesized insights never enter proactive push (they live in recall only)."""
         return [_memory_to_dict(m) for m in proactive_engine.on_file_open(file_path)]
 
     @mcp.tool()
