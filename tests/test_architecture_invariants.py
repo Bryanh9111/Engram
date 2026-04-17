@@ -108,6 +108,7 @@ class TestSchemaInvariants:
         assert "scope" in cols
 
     def test_memories_origin_check_excludes_compiled(self, conn):
+        # 'compiled' is still forbidden (only human/agent/compost allowed)
         with pytest.raises(sqlite3.IntegrityError, match="origin"):
             conn.execute(
                 """INSERT INTO memories
@@ -115,6 +116,64 @@ class TestSchemaInvariants:
                     pinned, scope, created_at)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 ("t1", "x", "s", "fact", "compiled", "test", "[]", "active", 0.5, 0, "project", "2026-04-16"),
+            )
+
+    def test_memories_origin_accepts_compost(self, conn):
+        # 'compost' is a valid origin (debate 019 Q1)
+        # Must also satisfy: kind=insight + source_trace + expires_at
+        conn.execute(
+            """INSERT INTO memories
+               (id, content, summary, kind, origin, project, tags, status, strength,
+                pinned, scope, source_trace, expires_at, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            ("tc", "x", "s", "insight", "compost", None, "[]", "active", 0.85, 0,
+             "global", '{"compost_fact_ids":["f1"]}', "2099-01-01", "2026-04-16"),
+        )
+        # No exception = pass
+
+    def test_compost_origin_requires_insight_kind(self, conn):
+        # origin=compost must be paired with kind=insight
+        with pytest.raises(sqlite3.IntegrityError, match="kind"):
+            conn.execute(
+                """INSERT INTO memories
+                   (id, content, summary, kind, origin, project, tags, status, strength,
+                    pinned, scope, source_trace, expires_at, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                ("tc2", "x", "s", "fact", "compost", "test", "[]", "active", 0.5, 0,
+                 "project", "{}", "2099-01-01", "2026-04-16"),
+            )
+
+    def test_compost_origin_requires_source_trace(self, conn):
+        with pytest.raises(sqlite3.IntegrityError, match="source_trace"):
+            conn.execute(
+                """INSERT INTO memories
+                   (id, content, summary, kind, origin, project, tags, status, strength,
+                    pinned, scope, expires_at, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                ("tc3", "x", "s", "insight", "compost", None, "[]", "active", 0.5, 0,
+                 "global", "2099-01-01", "2026-04-16"),
+            )
+
+    def test_compost_origin_requires_expires_at(self, conn):
+        with pytest.raises(sqlite3.IntegrityError, match="expires_at"):
+            conn.execute(
+                """INSERT INTO memories
+                   (id, content, summary, kind, origin, project, tags, status, strength,
+                    pinned, scope, source_trace, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                ("tc4", "x", "s", "insight", "compost", None, "[]", "active", 0.5, 0,
+                 "global", "{}", "2026-04-16"),
+            )
+
+    def test_source_trace_must_be_valid_json(self, conn):
+        with pytest.raises(sqlite3.IntegrityError, match="source_trace"):
+            conn.execute(
+                """INSERT INTO memories
+                   (id, content, summary, kind, origin, project, tags, status, strength,
+                    pinned, scope, source_trace, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                ("tc5", "x", "s", "fact", "human", "test", "[]", "active", 0.5, 0,
+                 "project", "not-valid-json", "2026-04-16"),
             )
 
     def test_memories_length_check_4000(self, conn):
@@ -171,6 +230,41 @@ class TestSchemaInvariants:
             "SELECT name FROM sqlite_master WHERE type='table' AND name='recall_miss_log'"
         ).fetchone()
         assert row is not None
+
+    def test_compost_insight_sources_table_exists(self, conn):
+        row = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='compost_insight_sources'"
+        ).fetchone()
+        assert row is not None
+
+    def test_memory_scores_excludes_expired(self, conn):
+        # Expired compost insight should not appear in memory_scores view
+        import datetime as dt
+        past = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=1)).isoformat()
+        future = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=1)).isoformat()
+        now = dt.datetime.now(dt.timezone.utc).isoformat()
+
+        # Expired
+        conn.execute(
+            """INSERT INTO memories
+               (id, content, summary, kind, origin, project, tags, status, strength,
+                pinned, scope, source_trace, expires_at, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            ("exp", "expired", "s", "insight", "compost", None, "[]", "active", 0.5, 0,
+             "global", "{}", past, now),
+        )
+        # Not expired
+        conn.execute(
+            """INSERT INTO memories
+               (id, content, summary, kind, origin, project, tags, status, strength,
+                pinned, scope, source_trace, expires_at, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            ("live", "live", "s", "insight", "compost", None, "[]", "active", 0.5, 0,
+             "global", "{}", future, now),
+        )
+        ids = {r[0] for r in conn.execute("SELECT id FROM memory_scores").fetchall()}
+        assert "live" in ids
+        assert "exp" not in ids
 
 
 class TestNoEmbeddingColumn:

@@ -39,6 +39,9 @@ class MemoryStore:
         evidence_link: str | None = None,
         pinned: bool = False,
         summary: str = "",
+        source_trace: dict | None = None,
+        expires_at: datetime | None = None,
+        scope: MemoryScope | None = None,
     ) -> MemoryObject:
         """Write a memory. Deduplicates against existing similar content."""
         tags = tags or []
@@ -61,6 +64,9 @@ class MemoryStore:
             evidence_link=evidence_link,
             pinned=pinned,
             summary=summary,
+            source_trace=source_trace,
+            expires_at=expires_at,
+            scope=scope,
         )
 
         # Kind-specific soft quality check (only if confidence was default)
@@ -70,9 +76,9 @@ class MemoryStore:
         self.conn.execute(
             """INSERT INTO memories
                (id, content, summary, kind, origin, project, path_scope, tags,
-                confidence, evidence_link, status, strength, pinned, scope,
-                created_at, accessed_at, last_verified, access_count)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                confidence, evidence_link, source_trace, status, strength, pinned, scope,
+                created_at, accessed_at, last_verified, expires_at, access_count)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 mem.id,
                 mem.content,
@@ -84,6 +90,7 @@ class MemoryStore:
                 json.dumps(mem.tags),
                 mem.confidence,
                 mem.evidence_link,
+                json.dumps(mem.source_trace) if mem.source_trace else None,
                 mem.status.value,
                 mem.strength,
                 int(mem.pinned),
@@ -91,6 +98,7 @@ class MemoryStore:
                 mem.created_at.isoformat(),
                 None,
                 None,
+                mem.expires_at.isoformat() if mem.expires_at else None,
                 0,
             ),
         )
@@ -125,7 +133,8 @@ class MemoryStore:
                 """SELECT m.id, m.content, m.summary, m.kind, m.origin, m.project,
                           m.path_scope, m.tags, m.confidence, m.evidence_link,
                           m.status, m.strength, m.pinned, m.created_at,
-                          m.accessed_at, m.last_verified, m.access_count, m.scope
+                          m.accessed_at, m.last_verified, m.access_count, m.scope,
+                          m.source_trace, m.expires_at
                    FROM memories m
                    JOIN memories_fts fts ON m.rowid = fts.rowid
                    WHERE memories_fts MATCH ?
@@ -230,7 +239,8 @@ class MemoryStore:
                 SELECT m.id, m.content, m.summary, m.kind, m.origin, m.project,
                        m.path_scope, m.tags, m.confidence, m.evidence_link,
                        m.status, m.strength, m.pinned, m.created_at,
-                       m.accessed_at, m.last_verified, m.access_count
+                       m.accessed_at, m.last_verified, m.access_count, m.scope,
+                       m.source_trace, m.expires_at
                 FROM memories m
                 JOIN memories_fts fts ON m.rowid = fts.rowid
                 WHERE memories_fts MATCH ? AND m.status != 'obsolete' {where_sql}
@@ -274,7 +284,8 @@ class MemoryStore:
             SELECT m.id, m.content, m.summary, m.kind, m.origin, m.project,
                    m.path_scope, m.tags, m.confidence, m.evidence_link,
                    m.status, m.strength, m.pinned, m.created_at,
-                   m.accessed_at, m.last_verified, m.access_count
+                   m.accessed_at, m.last_verified, m.access_count, m.scope,
+                   m.source_trace, m.expires_at
             FROM memories m
             LEFT JOIN memory_scores ms ON m.id = ms.id
             WHERE m.status = 'active' {where_sql}
@@ -362,7 +373,8 @@ class MemoryStore:
             """SELECT id, content, summary, kind, origin, project,
                       path_scope, tags, confidence, evidence_link,
                       status, strength, pinned, created_at,
-                      accessed_at, last_verified, access_count, scope
+                      accessed_at, last_verified, access_count, scope,
+                      source_trace, expires_at
                FROM memories
                WHERE status = 'active'
                  AND pinned = 0
@@ -423,7 +435,8 @@ class MemoryStore:
             """SELECT id, content, summary, kind, origin, project,
                       path_scope, tags, confidence, evidence_link,
                       status, strength, pinned, created_at,
-                      accessed_at, last_verified, access_count, scope
+                      accessed_at, last_verified, access_count, scope,
+                      source_trace, expires_at
                FROM memories ORDER BY created_at"""
         ).fetchall()
         memories = [self._row_to_memory(row) for row in rows]
@@ -626,6 +639,8 @@ created_at: {mem.created_at.isoformat()}
 
     def _row_to_memory(self, row: tuple) -> MemoryObject:
         scope = MemoryScope(row[17]) if len(row) > 17 and row[17] else None
+        source_trace = json.loads(row[18]) if len(row) > 18 and row[18] else None
+        expires_at = datetime.fromisoformat(row[19]) if len(row) > 19 and row[19] else None
         return MemoryObject(
             id=row[0],
             content=row[1],
@@ -641,6 +656,8 @@ created_at: {mem.created_at.isoformat()}
             strength=row[11],
             pinned=bool(row[12]),
             scope=scope,
+            source_trace=source_trace,
+            expires_at=expires_at,
             created_at=datetime.fromisoformat(row[13]),
             accessed_at=datetime.fromisoformat(row[14]) if row[14] else None,
             last_verified=datetime.fromisoformat(row[15]) if row[15] else None,

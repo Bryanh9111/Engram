@@ -14,6 +14,7 @@ class MemoryKind(str, Enum):
     PROCEDURE = "procedure"
     FACT = "fact"
     GUARDRAIL = "guardrail"
+    INSIGHT = "insight"  # Compost-produced synthesis, requires origin='compost'
 
 
 class MemoryStatus(str, Enum):
@@ -65,6 +66,8 @@ class MemoryObject:
     strength: float = 0.5
     pinned: bool = False
     scope: MemoryScope | None = None
+    source_trace: dict | None = None  # Compost-origin provenance JSON
+    expires_at: datetime | None = None  # TTL for compost-origin entries
     created_at: datetime = field(default_factory=_now)
     accessed_at: datetime | None = None
     last_verified: datetime | None = None

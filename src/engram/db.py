@@ -10,12 +10,13 @@ CREATE TABLE IF NOT EXISTS memories (
     content       TEXT NOT NULL CHECK(length(content) <= 4000),
     summary       TEXT NOT NULL,
     kind          TEXT NOT NULL,
-    origin        TEXT DEFAULT 'human' CHECK(origin IN ('human','agent')),
+    origin        TEXT DEFAULT 'human' CHECK(origin IN ('human','agent','compost')),
     project       TEXT,
     path_scope    TEXT,
     tags          TEXT DEFAULT '[]',
     confidence    REAL DEFAULT 1.0,
     evidence_link TEXT,
+    source_trace  TEXT,
     status        TEXT DEFAULT 'active',
     strength      REAL DEFAULT 0.5,
     pinned        INTEGER DEFAULT 0,
@@ -23,12 +24,31 @@ CREATE TABLE IF NOT EXISTS memories (
     created_at    TEXT NOT NULL,
     accessed_at   TEXT,
     last_verified TEXT,
+    expires_at    TEXT,
     access_count  INTEGER DEFAULT 0,
     CHECK(
         (scope = 'project' AND project IS NOT NULL)
         OR (scope IN ('global','meta') AND project IS NULL)
-    )
+    ),
+    CHECK(source_trace IS NULL OR json_valid(source_trace)),
+    CHECK(expires_at IS NULL OR julianday(expires_at) IS NOT NULL),
+    CHECK(origin != 'compost' OR kind = 'insight'),
+    CHECK(origin != 'compost' OR source_trace IS NOT NULL),
+    CHECK(origin != 'compost' OR expires_at IS NOT NULL)
 );
+
+CREATE TABLE IF NOT EXISTS compost_insight_sources (
+    memory_id TEXT NOT NULL,
+    fact_id   TEXT NOT NULL,
+    PRIMARY KEY (memory_id, fact_id)
+) WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS idx_compost_insight_sources_fact_id
+    ON compost_insight_sources(fact_id);
+
+CREATE INDEX IF NOT EXISTS idx_memories_compost_live
+    ON memories(origin, status, expires_at)
+    WHERE origin = 'compost' AND status = 'active';
 
 CREATE TABLE IF NOT EXISTS recall_miss_log (
     query_norm   TEXT NOT NULL,
@@ -94,13 +114,18 @@ SELECT id,
     * (1.0 / (1.0 + 0.02 * MAX(0, julianday('now') - julianday(COALESCE(accessed_at, created_at)))))
   END AS effective_score
 FROM memories
-WHERE status IN ('active', 'resolved');
+WHERE status IN ('active', 'resolved')
+  AND (expires_at IS NULL OR julianday(expires_at) > julianday('now'));
 
 CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
     INSERT INTO memories_fts(memories_fts, rowid, content, summary, tags)
     VALUES ('delete', old.rowid, old.content, old.summary, old.tags);
     INSERT INTO memories_fts(rowid, content, summary, tags)
     VALUES (new.rowid, new.content, new.summary, new.tags);
+END;
+
+CREATE TRIGGER IF NOT EXISTS memories_compost_map_ad AFTER DELETE ON memories BEGIN
+    DELETE FROM compost_insight_sources WHERE memory_id = old.id;
 END;
 """
 

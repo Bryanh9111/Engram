@@ -60,7 +60,8 @@ class TestMemoryObject:
         )
         assert mem.kind == MemoryKind.FACT
 
-    def test_all_five_kinds_exist(self):
+    def test_all_six_kinds_exist(self):
+        # 5 user-facing kinds + 1 compost-reserved (debate 019 Q1)
         kinds = set(MemoryKind)
         assert kinds == {
             MemoryKind.CONSTRAINT,
@@ -68,6 +69,7 @@ class TestMemoryObject:
             MemoryKind.PROCEDURE,
             MemoryKind.FACT,
             MemoryKind.GUARDRAIL,
+            MemoryKind.INSIGHT,  # debate 019: Compost-produced synthesis
         }
 
     def test_all_statuses_exist(self):
