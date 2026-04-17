@@ -38,6 +38,7 @@ def _memory_to_dict(mem) -> dict:
 
 
 def cmd_add(args, store: MemoryStore) -> None:
+    from engram.model import MemoryScope
     mem = store.remember(
         content=args.content,
         kind=MemoryKind(args.kind),
@@ -46,6 +47,7 @@ def cmd_add(args, store: MemoryStore) -> None:
         tags=args.tag or [],
         confidence=args.confidence,
         pinned=args.pinned,
+        scope=MemoryScope(args.scope) if args.scope else None,
     )
     print(f"Remembered [{mem.kind.value}] {mem.id}: {mem.summary}")
 
@@ -229,6 +231,8 @@ def main(argv: list[str] | None = None) -> None:
     p_add.add_argument("--tag", action="append")
     p_add.add_argument("--confidence", type=float, default=1.0)
     p_add.add_argument("--pinned", action="store_true")
+    p_add.add_argument("--scope", choices=["project", "global", "meta"],
+                       help="Scope (default: inferred from --project)")
 
     # search
     p_search = sub.add_parser("search", help="Recall memories")

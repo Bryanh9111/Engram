@@ -28,6 +28,9 @@ def _memory_to_dict(mem) -> dict:
         "status": mem.status.value,
         "strength": mem.strength,
         "pinned": mem.pinned,
+        "scope": mem.scope.value if mem.scope else None,
+        "expires_at": mem.expires_at.isoformat() if mem.expires_at else None,
+        "source_trace": mem.source_trace,
     }
 
 
@@ -42,7 +45,9 @@ def _handle_remember(
     confidence: float = 1.0,
     evidence_link: str | None = None,
     pinned: bool = False,
+    scope: str | None = None,
 ) -> dict:
+    from engram.model import MemoryScope
     mem = store.remember(
         content=content,
         kind=MemoryKind(kind),
@@ -53,6 +58,7 @@ def _handle_remember(
         confidence=confidence,
         evidence_link=evidence_link,
         pinned=pinned,
+        scope=MemoryScope(scope) if scope else None,
     )
     return _memory_to_dict(mem)
 
@@ -154,11 +160,12 @@ def create_server() -> FastMCP:
         confidence: float = 1.0,
         evidence_link: str | None = None,
         pinned: bool = False,
+        scope: str | None = None,
     ) -> dict:
-        """Store a memory. Kinds: constraint, decision, procedure, fact, guardrail. Origins: human, agent, compiled."""
+        """Store a memory. Kinds: constraint, decision, procedure, fact, guardrail, insight. Origins: human, agent, compost. Scope: project (default when project given), global (cross-project knowledge, requires project=None), meta (about user/agent, requires project=None). If scope omitted, inferred from project."""
         return _handle_remember(
             store, content, kind, origin, project, path_scope, tags,
-            confidence, evidence_link, pinned,
+            confidence, evidence_link, pinned, scope,
         )
 
     @mcp.tool()
