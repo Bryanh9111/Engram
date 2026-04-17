@@ -87,7 +87,9 @@ How Engram compares to other memory solutions for AI agents:
 
 ## Architecture
 
-Designed through five rounds of multi-model AI debate (Claude Opus, Sonnet 4.6, Gemini 2.5 Pro, GPT-5.4) and validated against Karpathy's LLM Knowledge Base methodology, Anthropic's harness engineering, and the Obsidian founder's (kepano) origin-separation principle.
+**Deep dive**: [`ARCHITECTURE.md`](./ARCHITECTURE.md) — hard constraints (HC-1/HC-2), memory model, trust boundary, API surface discipline, Compost bidirectional channel contract, CI-enforced invariants, and roadmap.
+
+Designed through multiple rounds of multi-model AI debate (Claude Opus, Sonnet 4.6, Gemini 2.5 Pro, GPT-5.4) and validated against Karpathy's LLM Knowledge Base methodology, Anthropic's harness engineering, and the Obsidian founder's (kepano) origin-separation principle.
 
 ### Memory Model
 
