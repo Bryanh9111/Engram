@@ -332,8 +332,9 @@ Budgets:
 | Expiry filter on hot read paths | `test_expiry_coverage.py` (8 tests) |
 | Feedback-loop exclusion of `origin=compost` from stream | `test_stream_entries.py::TestStreamEntriesFeedbackLoopPrevention` |
 | No embedding column until v3.5+ re-evaluation | `...::TestNoEmbeddingColumn` |
+| WAL + busy_timeout + raised cache_size PRAGMAs set | `...::TestPragmaConfiguration` (4 tests, debate 016 Codex I3) |
 
-Current total: 223 tests across 13 test files.
+Current total: 227 tests across 13 test files.
 
 ---
 

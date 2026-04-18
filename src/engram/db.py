@@ -132,7 +132,14 @@ END;
 
 def init_db(path: str) -> sqlite3.Connection:
     conn = sqlite3.connect(path)
+    # Debate 016 Codex I3 audit: harden against concurrent-writer contention
+    # and cold FTS5 index scans. Python sqlite3 binding defaults cover
+    # busy_timeout (5000ms) and synchronous (FULL), but alternate bindings
+    # or CLI access may not — set them explicitly for cross-binding parity.
+    # cache_size default -2000 (2MB) is tight for FTS5 at 500+ memories.
     conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=5000")
+    conn.execute("PRAGMA cache_size=-8000")
     conn.executescript(_SCHEMA)
     conn.commit()
     return conn

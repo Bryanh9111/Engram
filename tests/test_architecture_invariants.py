@@ -372,3 +372,46 @@ class TestNoEmbeddingColumn:
     def test_compost_cache_has_no_embedding_column(self, conn):
         cols = {r[1] for r in conn.execute("PRAGMA table_info(compost_cache)").fetchall()}
         assert "embedding" not in cols
+
+
+class TestPragmaConfiguration:
+    """SQLite PRAGMA hardening per debate 016 Codex I3.
+
+    Without busy_timeout/cache_size, the current warm-cache <50ms latency is
+    an illusion. Under concurrent writer contention or cold FTS5 index scans
+    at 500+ memories, the default config degrades sharply. These settings
+    are the promised cold-cache p99 guarantees from debate 016 synthesis.
+    """
+
+    @pytest.fixture
+    def conn(self, tmp_path):
+        from engram.db import init_db
+        return init_db(str(tmp_path / "pragma_test.db"))
+
+    def test_journal_mode_is_wal(self, conn):
+        mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
+        assert mode.lower() == "wal"
+
+    def test_busy_timeout_set(self, conn):
+        # Default is 0 — any concurrent writer gets immediate SQLITE_BUSY.
+        # 250ms is the debate 016 Codex I3 recommendation.
+        timeout = conn.execute("PRAGMA busy_timeout").fetchone()[0]
+        assert timeout >= 250, f"busy_timeout should be >=250ms, got {timeout}"
+
+    def test_cache_size_raised(self, conn):
+        # Default is -2000 (2MB). FTS5 scans at 500+ memories benefit from
+        # larger cache. -8000 = 8MB per the debate 016 audit recommendation.
+        cache = conn.execute("PRAGMA cache_size").fetchone()[0]
+        # Negative = KB (absolute); positive = pages. Accept either as long
+        # as it's larger than the default.
+        if cache < 0:
+            assert cache <= -8000, f"cache_size KB should be <=-8000, got {cache}"
+        else:
+            assert cache >= 8000 / 4, f"cache_size pages too small: {cache}"
+
+    def test_synchronous_not_off(self, conn):
+        # WAL + synchronous=NORMAL is safe and faster than FULL.
+        # synchronous=OFF loses committed writes on OS crash — forbidden.
+        # 0=OFF, 1=NORMAL, 2=FULL, 3=EXTRA
+        sync = conn.execute("PRAGMA synchronous").fetchone()[0]
+        assert sync >= 1, f"synchronous=OFF is unsafe (got {sync})"
