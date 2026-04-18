@@ -333,8 +333,9 @@ Budgets:
 | Feedback-loop exclusion of `origin=compost` from stream | `test_stream_entries.py::TestStreamEntriesFeedbackLoopPrevention` |
 | No embedding column until v3.5+ re-evaluation | `...::TestNoEmbeddingColumn` |
 | WAL + busy_timeout + raised cache_size PRAGMAs set | `...::TestPragmaConfiguration` (4 tests, debate 016 Codex I3) |
+| `recall_miss_log` upsert on empty FTS5 result | `test_recall_miss_log.py::TestRecallMissLog` (7 tests, debate 016 Q4) |
 
-Current total: 227 tests across 13 test files.
+Current total: 234 tests across 14 test files.
 
 ---
 
@@ -352,7 +353,8 @@ Current total: 227 tests across 13 test files.
 | Phase 3 — GC daemon (30-day grace physical purge) | first expired compost entry observed | deferred (0 today) |
 | Phase 3 — extended `engram lint` (expired-still-active, orphan definition TBD) | any time | queued |
 | Phase 3 — ARCHITECTURE.md | any time | **this file** |
-| v4 — LLM compile with Planner→Worker→Critic | 500 memories | future |
+| Phase 3 — `recall_miss_log` writer (local passive collection) | — | done (closes debate 016 Q4 debt) |
+| v4 — LLM compile with Planner→Worker→Critic | 500 memories | **triggered (553 today)** — re-evaluate scope: partially superseded by Compost Slice B |
 | v4.1 — Temporal expiry (degrade, not hide) | time-sensitive > 10% | future |
 | v5 — Multi-path recall + LLM rerank | >5 FTS5 miss cases | future |
 | v6 — Embedding (sqlite-vec) + RRF fusion | 2000 memories | future |

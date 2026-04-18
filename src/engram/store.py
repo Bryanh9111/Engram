@@ -287,11 +287,39 @@ class MemoryStore:
         results = [self._row_to_memory(row) for row in rows]
         results = self._rank_by_score(results)
         self._touch(results)
+        if not results:
+            self._log_recall_miss(query, project)
         self._log_op("recall", detail=f"query={query[:50]} results={len(results)}")
         self.conn.commit()
         if budget == "tiny":
             return [self._to_card(m) for m in results]
         return results
+
+    def _log_recall_miss(self, query: str, project: str | None) -> None:
+        """Upsert a recall miss into recall_miss_log.
+
+        Debate 016 Q4 — local FTS5 miss observability. Non-empty queries
+        that return zero rows get recorded; empty/whitespace queries
+        (which hit the recent-memory fallback) are not misses.
+
+        query_norm collapses case + whitespace so near-identical queries
+        merge. project is normalized to '' for PK upsert because SQLite
+        PK NULLs don't participate in ON CONFLICT matching.
+        """
+        q = query.strip()
+        if not q:
+            return
+        query_norm = " ".join(q.lower().split())
+        project_key = project or ""
+        sample = q[:200]
+        self.conn.execute(
+            """INSERT INTO recall_miss_log (query_norm, project, sample_query)
+               VALUES (?, ?, ?)
+               ON CONFLICT(query_norm, project) DO UPDATE SET
+                   hits = hits + 1,
+                   last_seen = datetime('now')""",
+            (query_norm, project_key, sample),
+        )
 
     def _to_card(self, mem: MemoryObject) -> dict:
         """Project a MemoryObject to a compact card (~50 tokens)."""

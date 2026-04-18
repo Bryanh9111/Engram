@@ -26,7 +26,7 @@ tests/
 - Python 3.11+ / uv
 - SQLite + FTS5 (WAL mode), migrations in `src/engram/migrations/`
 - MCP protocol (FastMCP)
-- pytest (214 tests)
+- pytest (234 tests)
 
 ## 开发规范
 
@@ -185,9 +185,12 @@ Phase 3 (按数据触发):
   - recall/proactive 分层 (debate 019 Q5 F) — 触发: 生产 >10 条 compost entry
   - GC daemon — 触发: 见到第一条 expired compost entry (30-day grace per contract)
   - engram lint 扩展 (compost-specific) — 随时
-  - ARCHITECTURE.md origin 不变量文档化 — 随时
+  - ARCHITECTURE.md origin 不变量文档化 — 完成 (0ee0580)
+  - SQLite PRAGMA 审计 (debate 016 Codex I3) — 完成 (a2369cf)
+  - recall_miss_log writer (debate 016 Q4) — 完成 (passive collection, 离线 export 到 Compost 待 v5 trigger)
    ↓
 v4 (trigger: 500 memories) — LLM compile with Planner→Worker→Critic
+  ⚠ 当前 553 memories 已穿透 trigger, 但 Compost Slice B 已承担部分"跨项目 synthesized insight" 职责, v4 scope 需重新评估
    ↓
 v4.1 (trigger: 时间敏感 memories >10% 或 >30 条) — Temporal Expiry (A, deferred)
    ↓
