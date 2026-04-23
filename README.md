@@ -102,7 +102,7 @@ Six kinds, grounded in real coding and collaboration scenarios:
 | `procedure` | Version-controlled | "Integration tests: seed Redis, then worker, then API" |
 | `fact` | Short-lived | "UserSearchV2 is behind SEARCH_V2=1 flag" |
 | `guardrail` | Incident-driven | "Never parallelize these two migrations — caused prod failure" |
-| `insight` | Reserved for Compost synthesis (v3.4 Slice B) | "Users in 3 projects complain about checkout latency > 2s" |
+| `insight` | Cross-project synthesis. `origin=compost` MUST use this kind (schema CHECK enforces single direction); `origin=human/agent` MAY also write `insight` (kind not exclusive to compost) | "Users in 3 projects complain about checkout latency > 2s" |
 
 ### Origin Separation
 
@@ -394,7 +394,7 @@ Engram's storage and retrieval layer is domain-agnostic, but the `proactive()` t
 - Python 3.11+ / [uv](https://github.com/astral-sh/uv)
 - SQLite + FTS5 (WAL mode) — zero external dependencies
 - [MCP](https://modelcontextprotocol.io/) protocol via FastMCP
-- 214 tests, ~2,500 lines of code
+- 242 tests, ~2,500 lines of code
 
 ## Roadmap
 
@@ -408,7 +408,8 @@ Engram's storage and retrieval layer is domain-agnostic, but the `proactive()` t
 | **v3.3 Slice A** | — | Schema hardening + unpin API + scope tri-value enum |
 | **v3.4 Slice B Phase 1** | — | Compost schema foundation (insight kind, source_trace, expires_at, compost_insight_sources) |
 | **v3.4 Slice B Phase 2 P0** | — | API surface invariant test + MemoryOrigin enum realignment (HUMAN/AGENT/COMPOST) |
-| **v3.4 Slice B Phase 2 S2** (current) | — | Bidirectional Compost channel: `stream_for_compost` + `invalidate_compost_fact` + CLI `export-stream` |
+| **v3.4 Slice B Phase 2 S2** | — | Bidirectional Compost channel: `stream_for_compost` + `invalidate_compost_fact` + CLI `export-stream` |
+| **v3.4 Slice B Phase 2 S3** (current) | dogfood-found duplicate writes | Compost insight structural idempotency (migration 003): partial UNIQUE INDEX on `(origin, root_insight_id, chunk_index)`; `_find_compost_duplicate` in `remember()` returns existing id (PUT semantics, no `_strengthen`) |
 | **Phase 3** | data-driven | Recall/proactive tier policy, GC daemon (30-day grace), extended lint, ARCHITECTURE.md |
 | **v4** | 500 memories | LLM-powered compile with Planner→Worker→Critic pattern (ToFu-inspired) |
 | **v4.1** | time-sensitive memories >10% | Temporal expiry (degrade, not hide) |

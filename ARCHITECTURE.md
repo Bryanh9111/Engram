@@ -84,9 +84,14 @@ runtime recall remains deterministic.
 | `procedure` | Version-controlled | "Seed Redis, then worker, then API" |
 | `fact` | Short-lived | "UserSearchV2 behind SEARCH_V2=1" |
 | `guardrail` | Incident-driven | "Never parallelize migration 0042/0043" |
-| `insight` | Compost synthesis (reserved) | Cross-project pattern from Compost |
+| `insight` | Cross-project synthesis | Cross-project pattern (typically from Compost; agent/human may also write) |
 
-`insight` is locked to `origin=compost` by schema CHECK.
+Schema CHECK enforces `origin=compost ⇒ kind=insight` (one-way). The
+reverse — `kind=insight ⇒ origin=compost` — is NOT enforced; agent and
+human-written insights are legal. Compost-origin insights additionally
+carry `(root_insight_id, chunk_index)` structural identity enforced by
+partial UNIQUE INDEX (migration 003): re-writes return the existing
+memory id without `_strengthen` (PUT semantics).
 
 ### 3.2 Origins (3)
 
