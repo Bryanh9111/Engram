@@ -43,7 +43,7 @@ tests/
 - `procedure` — 操作步骤，需版本控制（"先 seed Redis 再启动"）
 - `fact` — 短命事实（"SearchV2 在 flag 后面"）
 - `guardrail` — 事故驱动的防护（"这两个 migration 不能并行"）
-- `insight` — Compost 合成的跨项目洞察（**保留给 origin=compost**，schema CHECK 强制）
+- `insight` — 跨项目洞察 / 合成结论。`origin=compost` 必须用此 kind（schema CHECK 强制单向），但 `agent` / `human` 也可写 `insight`（kind 不独占 compost）
 
 ## 记忆来源 (origin)
 
