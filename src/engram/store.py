@@ -49,15 +49,43 @@ class MemoryStore:
         expires_at: datetime | None = None,
         scope: MemoryScope | None = None,
     ) -> MemoryObject:
-        """Write a memory. Deduplicates against existing similar content."""
+        """Write a memory. Deduplicates against existing similar content.
+
+        For origin=compost with source_trace.root_insight_id + chunk_index
+        (structural identity from compost-engram-adapter splitter), uses
+        exact-match dedup with PUT semantics — returns existing row without
+        _strengthen. Different compost insights may have similar text
+        (overlapping fact subsets, similar themes), so FTS5 content dedup
+        would over-merge them; structural dedup is the correct primitive.
+
+        Falls back to FTS5 content dedup for non-compost origins and for
+        compost rows lacking the structural key.
+        """
         tags = tags or []
         if project:
             project = project.lower()
 
-        # Dedup check via FTS5
-        existing = self._find_duplicate(content, project)
-        if existing:
-            return self._strengthen(existing)
+        # Compost structural dedup path (debate 024)
+        if origin == MemoryOrigin.COMPOST and source_trace:
+            rid = source_trace.get("root_insight_id")
+            cidx = source_trace.get("chunk_index")
+            if rid is not None and cidx is not None:
+                existing = self._find_compost_duplicate(rid, cidx)
+                if existing:
+                    return existing
+                # No structural match — INSERT directly, skip FTS5 fallback.
+                # Two different compost insights may share text; only
+                # (root_insight_id, chunk_index) defines "same insight".
+            else:
+                # Malformed compost source_trace — fall through to FTS5
+                existing = self._find_duplicate(content, project)
+                if existing:
+                    return self._strengthen(existing)
+        else:
+            # Non-compost: FTS5 content dedup with strengthen
+            existing = self._find_duplicate(content, project)
+            if existing:
+                return self._strengthen(existing)
 
         mem = MemoryObject(
             content=content,
@@ -143,6 +171,34 @@ class MemoryStore:
         if mem.kind in (MemoryKind.PROCEDURE,) and not mem.path_scope and not mem.project:
             conf = min(conf, 0.9)
         return conf
+
+    def _find_compost_duplicate(
+        self, root_insight_id: str, chunk_index: int
+    ) -> MemoryObject | None:
+        """Exact-match lookup for an existing compost insight chunk.
+
+        Backed by partial UNIQUE INDEX idx_compost_insight_idempotency
+        (migration 003 / debate 024). Returns None if no match.
+
+        Does NOT strengthen — duplicate compost writes are infrastructure
+        noise (scheduler retry, manual re-push), not user re-confirmation.
+        access_count / strength stay frozen until an explicit recall.
+        """
+        row = self.conn.execute(
+            """SELECT m.id, m.content, m.summary, m.kind, m.origin, m.project,
+                      m.path_scope, m.tags, m.confidence, m.evidence_link,
+                      m.status, m.strength, m.pinned, m.created_at,
+                      m.accessed_at, m.last_verified, m.access_count, m.scope,
+                      m.source_trace, m.expires_at
+               FROM memories m
+               WHERE m.origin = 'compost'
+                 AND json_extract(m.source_trace, '$.root_insight_id') = ?
+                 AND json_extract(m.source_trace, '$.chunk_index')     = ?
+                 AND m.status = 'active'
+               LIMIT 1""",
+            (root_insight_id, chunk_index),
+        ).fetchone()
+        return self._row_to_memory(row) if row else None
 
     def _find_duplicate(
         self, content: str, project: str | None

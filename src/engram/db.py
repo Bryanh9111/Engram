@@ -50,6 +50,19 @@ CREATE INDEX IF NOT EXISTS idx_memories_compost_live
     ON memories(origin, status, expires_at)
     WHERE origin = 'compost' AND status = 'active';
 
+-- Migration 003 (debate 024): structural idempotency for compost insights.
+-- Same root_insight_id+chunk_index can only exist once per origin=compost.
+-- json_type filter excludes malformed source_trace (zod validates upstream,
+-- but defense-in-depth — UNIQUE only covers well-formed writes).
+CREATE UNIQUE INDEX IF NOT EXISTS idx_compost_insight_idempotency
+    ON memories(
+        json_extract(source_trace, '$.root_insight_id'),
+        json_extract(source_trace, '$.chunk_index')
+    )
+    WHERE origin = 'compost'
+      AND json_type(source_trace, '$.root_insight_id') = 'text'
+      AND json_type(source_trace, '$.chunk_index')     = 'integer';
+
 CREATE TABLE IF NOT EXISTS recall_miss_log (
     query_norm   TEXT NOT NULL,
     project      TEXT,
