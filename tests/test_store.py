@@ -546,6 +546,123 @@ class TestHealth:
         assert len(report["stale_claims"]) == 0
 
 
+class TestExtendedLint:
+    """Phase 3 extended lint (debate 020 §queued + ARCHITECTURE.md):
+    expired_still_active + orphan_insight_sources. Always-on checks
+    (no opt-in flag) since both are O(1) index scans."""
+
+    def test_expired_still_active_flags_past_deadline(self, store):
+        """Row with expires_at < now AND status='active' should surface."""
+        store.remember(
+            content="Stale flag should be reaped",
+            kind=MemoryKind.FACT,
+            project="ttl",
+        )
+        store.conn.execute(
+            "UPDATE memories SET expires_at = datetime('now', '-1 days')"
+        )
+        store.conn.commit()
+        report = store.health()
+        assert len(report["expired_still_active"]) == 1
+        row = report["expired_still_active"][0]
+        assert "expires_at" in row
+        assert row["origin"] == "human"
+
+    def test_expired_still_active_ignores_obsolete_status(self, store):
+        """Soft-deleted rows are not the GC daemon's job — only active ones."""
+        store.remember(content="Already retired", kind=MemoryKind.FACT, project="x")
+        store.conn.execute(
+            """UPDATE memories SET
+               expires_at = datetime('now', '-5 days'),
+               status = 'obsolete'"""
+        )
+        store.conn.commit()
+        report = store.health()
+        assert report["expired_still_active"] == []
+
+    def test_expired_still_active_ignores_null_expires_at(self, store):
+        """Most agent/human rows have no TTL; they must NOT surface."""
+        store.remember(content="No TTL on this one", kind=MemoryKind.FACT, project="x")
+        report = store.health()
+        assert report["expired_still_active"] == []
+
+    def test_expired_still_active_clean_store_zero(self, store):
+        # Full mode: list present, count key absent (lists carry the info).
+        report = store.health()
+        assert report["expired_still_active"] == []
+        assert "expired_still_active_count" not in report
+
+    def test_orphan_insight_sources_zero_on_clean_store(self, store):
+        """memories_compost_map_ad cascade trigger should keep this empty."""
+        report = store.health()
+        assert report["orphan_insight_sources"] == []
+
+    def test_orphan_insight_sources_detects_dangling_row(self, store):
+        """If a row is inserted directly without a backing memory, it surfaces.
+        This simulates the regression case where the cascade trigger fails."""
+        # Bypass remember() and INSERT a map row pointing to a nonexistent memory.
+        store.conn.execute(
+            "INSERT INTO compost_insight_sources (memory_id, fact_id) VALUES (?, ?)",
+            ("never-existed-id", "fact-x"),
+        )
+        store.conn.commit()
+        report = store.health()
+        assert len(report["orphan_insight_sources"]) == 1
+        assert report["orphan_insight_sources"][0]["memory_id"] == "never-existed-id"
+        assert report["orphan_insight_sources"][0]["fact_id"] == "fact-x"
+
+    def test_orphan_insight_sources_does_not_flag_obsolete_memory(self, store):
+        """Soft-deleted memory still has an id row — map_row pointing to it is
+        NOT orphan (debate 020 §分歧 1 by-design retention for invalidation
+        idempotency)."""
+        from datetime import datetime, timezone
+        from engram.model import MemoryOrigin, MemoryScope
+        mem = store.remember(
+            content="Compost insight that gets invalidated later",
+            kind=MemoryKind.INSIGHT,
+            origin=MemoryOrigin.COMPOST,
+            scope=MemoryScope.GLOBAL,
+            source_trace={"compost_fact_ids": ["f1"]},
+            expires_at=datetime(2099, 1, 1, tzinfo=timezone.utc),
+        )
+        # invalidate the memory (status='obsolete'); map row stays
+        store.conn.execute("UPDATE memories SET status='obsolete' WHERE id=?", (mem.id,))
+        store.conn.commit()
+        report = store.health()
+        assert report["orphan_insight_sources"] == []  # not an orphan; memory id still exists
+
+    def test_extended_lint_summary_mode_returns_counts(self, store):
+        """Summary mode exposes both new fields as counts."""
+        store.remember(content="Will expire", kind=MemoryKind.FACT, project="t")
+        store.conn.execute(
+            "UPDATE memories SET expires_at = datetime('now', '-2 days')"
+        )
+        store.conn.commit()
+        report = store.health(summary=True)
+        assert "expired_still_active_count" in report
+        assert report["expired_still_active_count"] == 1
+        assert "orphan_insight_sources_count" in report
+        assert report["orphan_insight_sources_count"] == 0
+        # Lists must NOT appear in summary mode
+        assert "expired_still_active" not in report
+        assert "orphan_insight_sources" not in report
+
+    def test_extended_lint_total_issues_includes_new_categories(self, store):
+        """total_issues must sum all 4 always-on categories (+ 2 stale-only)."""
+        store.remember(content="Will expire", kind=MemoryKind.FACT, project="t")
+        store.conn.execute(
+            "UPDATE memories SET expires_at = datetime('now', '-1 days')"
+        )
+        store.conn.execute(
+            "INSERT INTO compost_insight_sources (memory_id, fact_id) VALUES (?, ?)",
+            ("dangling", "f"),
+        )
+        store.conn.commit()
+        report = store.health()
+        # 1 expired + 1 orphan map row = 2 minimum
+        assert report["total_issues"] >= 2
+
+
 class TestExport:
     def test_export_jsonl(self, populated_store, tmp_path):
         out = tmp_path / "export.jsonl"

@@ -167,6 +167,23 @@ def cmd_lint(args, store: MemoryStore) -> None:
         for r in report["kind_staleness"][:10]:
             print(f"  [{r['kind']}] {r['id']} (>{r['ttl_days']}d old): {r['summary'][:50]}")
 
+    if report.get("expired_still_active"):
+        print(f"\nExpired still active ({len(report['expired_still_active'])}):")
+        for r in report["expired_still_active"][:10]:
+            print(
+                f"  [{r['kind']}/{r['origin']}] {r['id']} expired={r['expires_at']}: {r['summary'][:50]}"
+            )
+
+    if report.get("orphan_insight_sources"):
+        print(
+            f"\nOrphan compost_insight_sources ({len(report['orphan_insight_sources'])}):"
+        )
+        print(
+            "  ⚠ memories_compost_map_ad cascade trigger may have regressed."
+        )
+        for r in report["orphan_insight_sources"][:10]:
+            print(f"  memory_id={r['memory_id']} fact_id={r['fact_id']}")
+
     if total == 0:
         print("\nAll clean.")
 

@@ -629,14 +629,27 @@ created_at: {mem.created_at.isoformat()}
 
         stale_claims = self._find_stale_claims() if check_stale else []
         kind_staleness = self._find_kind_staleness() if check_stale else []
+        # Phase 3 extended lint (debate 020 §queued + ARCHITECTURE.md):
+        # always-on, cheap, no FTS5 self-join cost.
+        expired_still_active = self._find_expired_still_active()
+        orphan_insight_sources = self._find_orphan_insight_sources()
 
-        total = len(missing) + len(orphans_rows) + len(stale_claims) + len(kind_staleness)
+        total = (
+            len(missing)
+            + len(orphans_rows)
+            + len(stale_claims)
+            + len(kind_staleness)
+            + len(expired_still_active)
+            + len(orphan_insight_sources)
+        )
 
         if summary:
             # Compact mode for MCP: counts only
             result: dict = {
                 "missing_evidence_count": len(missing),
                 "orphans_count": len(orphans_rows),
+                "expired_still_active_count": len(expired_still_active),
+                "orphan_insight_sources_count": len(orphan_insight_sources),
                 "total_issues": total,
             }
             if check_stale:
@@ -652,12 +665,78 @@ created_at: {mem.created_at.isoformat()}
             "orphans": [
                 {"id": r[0], "summary": r[1], "kind": r[2]} for r in orphans_rows
             ],
+            "expired_still_active": expired_still_active,
+            "orphan_insight_sources": orphan_insight_sources,
             "total_issues": total,
         }
         if check_stale:
             result["stale_claims"] = stale_claims
             result["kind_staleness"] = kind_staleness
         return result
+
+    # Phase 3 extended lint helpers (debate 020 §queued, ARCHITECTURE.md
+    # "Phase 3 — extended `engram lint` (expired-still-active, orphan
+    # definition TBD)"). Always-on (no opt-in flag) because both checks
+    # are O(1) index scans — no FTS5 self-join, no cross-table O(n²).
+
+    def _find_expired_still_active(self) -> list[dict]:
+        """Rows past their expires_at deadline that still carry status='active'.
+
+        These should be hidden by every read path's expires_at filter
+        (audited in commit 0416823), and physically purged by the future
+        Phase 3 GC daemon (30-day grace per the Compost contract). Today
+        the GC daemon is unwritten, so any row this surfaces is one the
+        agent will never see in recall — confirming the filter works —
+        but that occupies storage until manual `forget` or GC ships.
+
+        Schema CHECK can't enforce `expires_at > now()` because it only
+        runs at INSERT time; rows naturally age past it. This is exactly
+        the lint-shaped check (time-sensitive correctness invariant
+        outside schema reach).
+        """
+        rows = self.conn.execute(
+            """SELECT id, summary, kind, origin, expires_at FROM memories
+               WHERE status = 'active'
+                 AND expires_at IS NOT NULL
+                 AND julianday(expires_at) < julianday('now')
+               ORDER BY expires_at ASC"""
+        ).fetchall()
+        return [
+            {
+                "id": r[0],
+                "summary": r[1],
+                "kind": r[2],
+                "origin": r[3],
+                "expires_at": r[4],
+            }
+            for r in rows
+        ]
+
+    def _find_orphan_insight_sources(self) -> list[dict]:
+        """`compost_insight_sources` rows whose memory_id no longer exists.
+
+        The `memories_compost_map_ad` AFTER DELETE trigger (migration 002)
+        cascades map cleanup when a memory is hard-deleted. This query
+        SHOULD be empty in normal operation — non-zero means the trigger
+        regressed (or someone deleted memories via raw SQL bypassing the
+        trigger). Defense-in-depth referential integrity check.
+
+        Soft-deleted (status='obsolete') memories are NOT orphans — by
+        debate 020 §分歧 1 the map row is kept for invalidation idempotency
+        as long as the memory row itself exists. Only hard-deleted /
+        cascaded-away memories should appear here.
+        """
+        rows = self.conn.execute(
+            """SELECT cis.memory_id, cis.fact_id
+               FROM compost_insight_sources cis
+               LEFT JOIN memories m ON m.id = cis.memory_id
+               WHERE m.id IS NULL
+               ORDER BY cis.memory_id, cis.fact_id"""
+        ).fetchall()
+        return [
+            {"memory_id": r[0], "fact_id": r[1]}
+            for r in rows
+        ]
 
     # Kind-specific TTL for staleness warning (not auto-deletion).
     # constraint/guardrail are long-lived and excluded.

@@ -410,7 +410,7 @@ Engram's storage and retrieval layer is domain-agnostic, but the `proactive()` t
 | **v3.4 Slice B Phase 2 P0** | — | API surface invariant test + MemoryOrigin enum realignment (HUMAN/AGENT/COMPOST) |
 | **v3.4 Slice B Phase 2 S2** | — | Bidirectional Compost channel: `stream_for_compost` + `invalidate_compost_fact` + CLI `export-stream` |
 | **v3.4 Slice B Phase 2 S3** (current) | dogfood-found duplicate writes | Compost insight structural idempotency (migration 003): partial UNIQUE INDEX on `(origin, root_insight_id, chunk_index)`; `_find_compost_duplicate` in `remember()` returns existing id (PUT semantics, no `_strengthen`) |
-| **Phase 3** | data-driven | Recall/proactive tier policy, GC daemon (30-day grace), extended lint, ARCHITECTURE.md |
+| **Phase 3** | data-driven (lint + ARCH done; tier+GC await >10 compost / first expired) | Extended `engram lint` (expired-still-active + orphan_insight_sources) shipped; ARCHITECTURE.md shipped; recall/proactive tier policy + GC daemon (30-day grace) deferred to data trigger |
 | **v4** | 500 memories | LLM-powered compile with Planner→Worker→Critic pattern (ToFu-inspired) |
 | **v4.1** | time-sensitive memories >10% | Temporal expiry (degrade, not hide) |
 | **v5** | FTS5 miss evidence | Multi-path recall + LLM reranking |

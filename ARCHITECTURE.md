@@ -356,7 +356,7 @@ Current total: 234 tests across 14 test files.
 | v3.4 Slice B Phase 2 S2 — Compost bidirectional channel runtime | — | **done (current)** |
 | Phase 3 — recall/proactive tiering | >10 compost entries in production | deferred (0 today) |
 | Phase 3 — GC daemon (30-day grace physical purge) | first expired compost entry observed | deferred (0 today) |
-| Phase 3 — extended `engram lint` (expired-still-active, orphan definition TBD) | any time | queued |
+| Phase 3 — extended `engram lint` (expired-still-active + orphan_insight_sources cascade-trigger guard) | any time | **done** (always-on checks: ROW past `expires_at` while `status='active'` surfaces GC pressure; `compost_insight_sources` LEFT JOIN catches `memories_compost_map_ad` cascade regression) |
 | Phase 3 — ARCHITECTURE.md | any time | **this file** |
 | Phase 3 — `recall_miss_log` writer (local passive collection) | — | done (closes debate 016 Q4 debt) |
 | v4 — LLM compile with Planner→Worker→Critic | 500 memories | **triggered (553 today)** — re-evaluate scope: partially superseded by Compost Slice B |
