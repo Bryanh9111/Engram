@@ -368,6 +368,16 @@ Current total: 234 tests across 14 test files.
 Data-driven triggers are load-bearing: speculative building before the
 trigger violates the "NO opaque ranking" and Linus yagni principles.
 
+**Integration posture toward external memory benchmarks** (added 2026-04-30
+after the Engram + Compost integration debate): no external benchmark
+suite — including ATM-Bench, the four ported baselines (A-Mem,
+HippoRAG 2, mem0, MemoryOS), or Comet opik — is to be adopted as a
+roadmap item. Reading other systems for shape comparison is allowed and
+encouraged (`docs/baseline-comparison-2026-04-30.md`); running them as
+evaluation harnesses against Engram is gated on a real recall-miss
+trigger that has not fired. Pinned decision: Engram memory id
+`2b2955d569a6`.
+
 ---
 
 ## 12. Further Reading
@@ -378,6 +388,7 @@ trigger violates the "NO opaque ranking" and Linus yagni principles.
 - `docs/v3.3-migration-plan.md` — Slice A background
 - `debates/019-compost-integration-implementation/synthesis.md` — integration design decisions
 - `debates/020-phase3-priority/synthesis.md` — this doc's own origin story
+- `docs/baseline-comparison-2026-04-30.md` — A-Mem / HippoRAG 2 / mem0 / MemoryOS shape comparison; reading-only reference produced from the 2026-04-30 integration debate
 - Pinned self-memories (recall against `project=engram`): `c266b5d41250`, `3c42d31657e6`, `a167bc678f53`, `e5749c50c84c`, `9d51ee6a8bfd`, `4927125bb2d7`, `83bf757a3709`, `1470755c0126`, plus the latest handover
 
 When this file drifts from the code, add an invariant test and delete the
