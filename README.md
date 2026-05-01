@@ -272,7 +272,7 @@ Claude Code calls these automatically via MCP when connected. You do not need to
 - **`No module named 'engram'`** — Run `uv sync --extra dev --extra mcp` again in the Engram directory
 - **MCP tools not appearing in Claude Code** — Run `claude mcp list` to check engram is registered and shows `✓ Connected`. If missing, re-run Step 4 (with `-s user`!). If `✗ Failed`, run `uv run engram-server` manually from the Engram directory to see the error. Fully restart Claude Code after fixing.
 - **Tests failing** — Run `uv sync --extra dev --extra mcp` to ensure all dev dependencies are installed
-- **Database location** — Default is `~/.engram/engram.db`. Override with `export ENGRAM_DB=/path/to/custom.db`
+- **Database location** — Default is `~/.engram/engram.db`. Engram creates `~/.engram` as owner-only (`0700`) and the SQLite files as owner-readable/writable (`0600`). Override with `export ENGRAM_DB=/path/to/custom.db`
 - **Backup** — The database is a single SQLite file. Copy `~/.engram/engram.db` (plus `.db-wal` and `.db-shm` if present) to back up. Restore by copying back.
 
 ### MCP Tools (14)

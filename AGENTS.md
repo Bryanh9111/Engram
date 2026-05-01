@@ -205,7 +205,7 @@ v7 (trigger: 3000 memories) — Memory graph + Dream agent
 
 ## Compost 集成契约 (v3.4 Slice B)
 
-详见 `/Users/zion/Repos/Zylo/Compost/docs/engram-integration-contract.md`。关键点：
+详见 `../Compost/docs/engram-integration-contract.md`。关键点：
 
 - **Engram → Compost** (事件源): `stream_for_compost` / CLI `export-stream` 以 9-key 契约 shape 流出 `{memory_id, kind, content, project, scope, created_at, updated_at, tags, origin}`；默认 `include_compost=False` 防 feedback loop
 - **Compost → Engram** (失效通道): `invalidate_compost_fact(fact_ids)` 逆查 `compost_insight_sources` 表，软删匹配 insights（忽略 pinned — Compost 是 insight 新鲜度权威）；物理删由 Phase 3 GC daemon 按 30-day grace 处理

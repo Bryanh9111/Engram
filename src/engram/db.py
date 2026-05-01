@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 import sqlite3
+from pathlib import Path
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS memories (
@@ -143,8 +145,34 @@ END;
 """
 
 
+def _chmod_private(path: Path) -> None:
+    """Best-effort owner-only permissions for memory DB artifacts."""
+    try:
+        os.chmod(path, 0o600)
+    except FileNotFoundError:
+        return
+    except PermissionError:
+        return
+
+
+def _prepare_db_path(path: str) -> Path:
+    db_path = Path(path).expanduser()
+    parent = db_path.parent
+    if not parent.exists():
+        parent.mkdir(parents=True, mode=0o700)
+    elif parent.name == ".engram":
+        # The default database contains the user's agent memory. Tighten an
+        # existing ~/.engram created under a permissive umask.
+        try:
+            os.chmod(parent, 0o700)
+        except PermissionError:
+            pass
+    return db_path
+
+
 def init_db(path: str) -> sqlite3.Connection:
-    conn = sqlite3.connect(path)
+    db_path = _prepare_db_path(path)
+    conn = sqlite3.connect(db_path)
     # Debate 016 Codex I3 audit: harden against concurrent-writer contention
     # and cold FTS5 index scans. Python sqlite3 binding defaults cover
     # busy_timeout (5000ms) and synchronous (FULL), but alternate bindings
@@ -155,4 +183,7 @@ def init_db(path: str) -> sqlite3.Connection:
     conn.execute("PRAGMA cache_size=-8000")
     conn.executescript(_SCHEMA)
     conn.commit()
+    _chmod_private(db_path)
+    _chmod_private(Path(f"{db_path}-wal"))
+    _chmod_private(Path(f"{db_path}-shm"))
     return conn

@@ -222,7 +222,7 @@ Pinned memory: `e5749c50c84c`.
 
 ## 7. Compost Bidirectional Channel (v3.4 Slice B)
 
-Contract: `/Users/zion/Repos/Zylo/Compost/docs/engram-integration-contract.md`
+Contract: `../Compost/docs/engram-integration-contract.md`
 Debate resolving design questions: `debates/019-compost-integration-implementation/synthesis.md`
 
 ### 7.1 Engram → Compost (event source)

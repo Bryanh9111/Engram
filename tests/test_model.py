@@ -204,3 +204,13 @@ class TestDatabase:
         mode = cursor.fetchone()[0]
         assert mode == "wal"
         conn.close()
+
+    def test_default_named_parent_is_owner_only(self, tmp_path):
+        from engram.db import init_db
+
+        db_path = tmp_path / ".engram" / "engram.db"
+        conn = init_db(str(db_path))
+        conn.close()
+
+        assert oct(db_path.parent.stat().st_mode & 0o777) == "0o700"
+        assert oct(db_path.stat().st_mode & 0o777) == "0o600"

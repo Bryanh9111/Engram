@@ -237,7 +237,6 @@ def _get_db_path() -> str:
 
 def create_server() -> FastMCP:
     db_path = _get_db_path()
-    Path(db_path).parent.mkdir(parents=True, exist_ok=True)
     store = MemoryStore(db_path)
     proactive_engine = ProactiveRecallEngine(store)
 
