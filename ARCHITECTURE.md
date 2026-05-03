@@ -7,9 +7,9 @@
 > If this document drifts from the code, the code is authoritative — but file
 > an issue. Drift should fail CI, not just be discovered by reviewers.
 
-**Version**: v3.4 Slice B Phase 2 S2 complete
-**Last commit at write**: `0416823`
-**Tests at write**: 223/223 passing
+**Version**: v3.4 Slice B Phase 2 S3 complete
+**Last doc refresh**: 2026-05-03 (post-`fedb068`)
+**Tests at refresh**: 252/252 passing
 
 ---
 
@@ -103,7 +103,9 @@ memory id without `_strengthen` (PUT semantics).
 
 The `compiled` origin existed in early designs but was removed in v3.4 P0
 after debate 018 moved LLM-synthesized content to `compost_cache` (its own
-table with its own CHECK). Enum drift prevention:
+table with its own CHECK). As of S3, `compost_cache` is a reserved schema and
+invariant-tested cache table, not a public MCP / CLI / Python cache API.
+Enum drift prevention:
 `TestEnumSchemaAlignment` + `TestMCPDocStringAlignment`.
 
 ### 3.3 Scopes (3)
@@ -340,7 +342,7 @@ Budgets:
 | WAL + busy_timeout + raised cache_size PRAGMAs set | `...::TestPragmaConfiguration` (4 tests, debate 016 Codex I3) |
 | `recall_miss_log` upsert on empty FTS5 result | `test_recall_miss_log.py::TestRecallMissLog` (7 tests, debate 016 Q4) |
 
-Current total: 234 tests across 14 test files.
+Current total: 252 tests across 15 test files.
 
 ---
 
@@ -353,13 +355,14 @@ Current total: 234 tests across 14 test files.
 | v3.3 Slice A — schema hardening + unpin + scope tri-value | — | done (migration 001) |
 | v3.4 Slice B Phase 1 — Compost schema foundation | — | done (migration 002) |
 | v3.4 Slice B Phase 2 P0 — API surface invariant + enum realignment | — | done |
-| v3.4 Slice B Phase 2 S2 — Compost bidirectional channel runtime | — | **done (current)** |
-| Phase 3 — recall/proactive tiering | >10 compost entries in production | deferred (0 today) |
-| Phase 3 — GC daemon (30-day grace physical purge) | first expired compost entry observed | deferred (0 today) |
+| v3.4 Slice B Phase 2 S2 — Compost bidirectional channel runtime | — | done |
+| v3.4 Slice B Phase 2 S3 — Compost insight structural idempotency | dogfood duplicate writes | **done (current)** |
+| Phase 3 — recall/proactive tiering | >10 origin=compost entries in production | deferred (2 current) |
+| Phase 3 — GC daemon (30-day grace physical purge) | first expired compost entry observed | deferred (0 expired current) |
 | Phase 3 — extended `engram lint` (expired-still-active + orphan_insight_sources cascade-trigger guard) | any time | **done** (always-on checks: ROW past `expires_at` while `status='active'` surfaces GC pressure; `compost_insight_sources` LEFT JOIN catches `memories_compost_map_ad` cascade regression) |
 | Phase 3 — ARCHITECTURE.md | any time | **this file** |
 | Phase 3 — `recall_miss_log` writer (local passive collection) | — | done (closes debate 016 Q4 debt) |
-| v4 — LLM compile with Planner→Worker→Critic | 500 memories | **triggered (553 today)** — re-evaluate scope: partially superseded by Compost Slice B |
+| v4 — LLM compile with Planner→Worker→Critic | 500 memories | **triggered (941 live MCP stats on 2026-05-03)** — re-evaluate scope: partially superseded by Compost Slice B / Compost v4 |
 | v4.1 — Temporal expiry (degrade, not hide) | time-sensitive > 10% | future |
 | v5 — Multi-path recall + LLM rerank | >5 FTS5 miss cases | future |
 | v6 — Embedding (sqlite-vec) + RRF fusion | 2000 memories | future |

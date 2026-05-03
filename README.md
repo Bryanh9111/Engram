@@ -1,6 +1,6 @@
 # Engram — Persistent Memory System for AI Coding Agents
 
-[![Tests](https://img.shields.io/badge/tests-214_passing-brightgreen)](https://github.com/Bryanh9111/Engram)
+[![Tests](https://img.shields.io/badge/tests-252_passing-brightgreen)](https://github.com/Bryanh9111/Engram)
 [![Python](https://img.shields.io/badge/python-3.11+-blue)](https://www.python.org/)
 [![MCP](https://img.shields.io/badge/MCP-14_tools-purple)](https://modelcontextprotocol.io/)
 [![License](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
@@ -383,7 +383,7 @@ The entire database is a single SQLite file at `~/.engram/engram.db`. Copy that 
 
 ### Is Engram production-ready?
 
-Engram v3.4 has 214 tests passing and has been running in production across 10 real projects for weeks. The core design has been validated through 5 rounds of structured multi-model debate and stress-tested against 16 reference projects (Karpathy's LLM Wiki, Anthropic Auto-Dream, Mem0, MemGPT, Zep, Letta, Ombre Brain, CatchMe, SocratiCode, Supermemory, and more). v3.4 adds a bidirectional channel to [Compost](https://github.com/Bryanh9111) for cross-project synthesis. That said, it's a personal tool by a solo developer — use at your own risk in commercial settings.
+Engram v3.4 has 252 tests passing and has been running in production across 10 real projects for weeks. The core design has been validated through 5 rounds of structured multi-model debate and stress-tested against 16 reference projects (Karpathy's LLM Wiki, Anthropic Auto-Dream, Mem0, MemGPT, Zep, Letta, Ombre Brain, CatchMe, SocratiCode, Supermemory, and more). v3.4 adds a bidirectional channel to [Compost](https://github.com/Bryanh9111) for cross-project synthesis. That said, it's a personal tool by a solo developer — use at your own risk in commercial settings.
 
 ### Can I use Engram for personal knowledge management (not coding)?
 
@@ -394,7 +394,7 @@ Engram's storage and retrieval layer is domain-agnostic, but the `proactive()` t
 - Python 3.11+ / [uv](https://github.com/astral-sh/uv)
 - SQLite + FTS5 (WAL mode) — zero external dependencies
 - [MCP](https://modelcontextprotocol.io/) protocol via FastMCP
-- 242 tests, ~2,500 lines of code
+- 252 tests, ~2,500 lines of code
 
 ## Roadmap
 

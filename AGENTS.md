@@ -8,7 +8,8 @@ AI agent 记忆系统 - 类人脑的持久化记忆，为 coding agent 设计。
 src/engram/
   model.py      — MemoryObject, MemoryKind(6), MemoryOrigin(3), MemoryStatus(4), MemoryScope(3)
   db.py         — SQLite + FTS5 schema + ops_log + compost_insight_sources + compost_cache
-  migrations/   — 001_slice_a_schema.sql, 002_slice_b_compost_integration.sql
+  migrations/   — 001_slice_a_schema.sql, 002_slice_b_compost_integration.sql,
+                  003_compost_insight_idempotency.sql
   store.py      — MemoryStore: remember/recall/forget/resolve/unpin/consolidate/health/
                   export/stats/micro_index/compile/stream_entries/_map_insight_sources
   proactive.py  — ProactiveRecallEngine: 主动召回 + suppress
@@ -26,7 +27,7 @@ tests/
 - Python 3.11+ / uv
 - SQLite + FTS5 (WAL mode), migrations in `src/engram/migrations/`
 - MCP protocol (FastMCP)
-- pytest (234 tests)
+- pytest (252 tests)
 
 ## 开发规范
 
@@ -43,7 +44,7 @@ tests/
 - `procedure` — 操作步骤，需版本控制（"先 seed Redis 再启动"）
 - `fact` — 短命事实（"SearchV2 在 flag 后面"）
 - `guardrail` — 事故驱动的防护（"这两个 migration 不能并行"）
-- `insight` — Compost 合成的跨项目洞察（**保留给 origin=compost**，schema CHECK 强制）
+- `insight` — 跨项目洞察 / 合成结论。`origin=compost` 必须用此 kind（schema CHECK 强制单向），但 `agent` / `human` 也可写 `insight`（kind 不独占 compost）
 
 ## 记忆来源 (origin)
 
@@ -51,7 +52,7 @@ tests/
 - `agent` — AI agent 工作中自动写入（中信任，proactive 推送）
 - `compost` — Compost 合成跨项目 insight 写回（必须 kind=insight + source_trace JSON + expires_at TTL；默认从 stream_for_compost 排除防 feedback loop）
 
-**注意**: `compiled` 已从 MemoryOrigin 删除（v3.4 Slice B Phase 2 P0）。compiled 内容现在只存在 `compost_cache` 表，不写 `memories` 主表。
+**注意**: `compiled` 已从 MemoryOrigin 删除（v3.4 Slice B Phase 2 P0）。compiled 内容现在只存在 `compost_cache` 表，不写 `memories` 主表。当前 `compost_cache` 是 schema/invariant 预留面，尚未暴露 public MCP / CLI cache API。
 
 ## 核心设计原则
 
@@ -179,18 +180,19 @@ v3.2 — real token measurements + health summary mode (99% 减 token)
 v3.3 — Slice A: schema hardening + unpin API + scope 三值 enum (migration 001)
 v3.4 Slice B Phase 1 — Compost schema foundation (migration 002: insight kind + source_trace + expires_at + compost_insight_sources)
 v3.4 Slice B Phase 2 P0 — API surface invariant + MemoryOrigin 对齐
-v3.4 Slice B Phase 2 S2 (current) — 双向 Compost 通道 runtime (stream_for_compost / invalidate_compost_fact / export-stream)
+v3.4 Slice B Phase 2 S2 — 双向 Compost 通道 runtime (stream_for_compost / invalidate_compost_fact / export-stream)
+v3.4 Slice B Phase 2 S3 (current) — Compost insight structural idempotency (migration 003; root_insight_id + chunk_index PUT semantics)
    ↓
 Phase 3 (按数据触发):
-  - recall/proactive 分层 (debate 019 Q5 F) — 触发: 生产 >10 条 compost entry
-  - GC daemon — 触发: 见到第一条 expired compost entry (30-day grace per contract)
-  - engram lint 扩展 (compost-specific) — 随时
+  - recall/proactive 分层 (debate 019 Q5 F) — 触发: 生产 >10 条 origin=compost entry；当前 2 条，deferred
+  - GC daemon — 触发: 见到第一条 expired compost entry (30-day grace per contract)；当前 0 条 expired
+  - engram lint 扩展 (compost-specific) — 完成
   - ARCHITECTURE.md origin 不变量文档化 — 完成 (0ee0580)
   - SQLite PRAGMA 审计 (debate 016 Codex I3) — 完成 (a2369cf)
   - recall_miss_log writer (debate 016 Q4) — 完成 (passive collection, 离线 export 到 Compost 待 v5 trigger)
    ↓
 v4 (trigger: 500 memories) — LLM compile with Planner→Worker→Critic
-  ⚠ 当前 553 memories 已穿透 trigger, 但 Compost Slice B 已承担部分"跨项目 synthesized insight" 职责, v4 scope 需重新评估
+  ⚠ 当前 941 memories 已穿透 trigger (2026-05-03 MCP stats), 但 Compost Slice B/v4 已承担部分"跨项目 synthesized insight" 职责, v4 scope 需重新评估
    ↓
 v4.1 (trigger: 时间敏感 memories >10% 或 >30 条) — Temporal Expiry (A, deferred)
    ↓
