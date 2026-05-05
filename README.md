@@ -274,6 +274,7 @@ Claude Code calls these automatically via MCP when connected. You do not need to
 - **Tests failing** — Run `uv sync --extra dev --extra mcp` to ensure all dev dependencies are installed
 - **Database location** — Default is `~/.engram/engram.db`. Engram creates `~/.engram` as owner-only (`0700`) and the SQLite files as owner-readable/writable (`0600`). Override with `export ENGRAM_DB=/path/to/custom.db`
 - **Backup** — The database is a single SQLite file. Copy `~/.engram/engram.db` (plus `.db-wal` and `.db-shm` if present) to back up. Restore by copying back.
+- **Many `engram-server` processes** — Engram MCP is stdio-based, so each active client may own a server process. More than a few idle copies usually means old agent sessions were not reaped. Confirm the DB is healthy with `sqlite3 ~/.engram/engram.db "pragma quick_check; pragma integrity_check;"`, then terminate stale `uv --directory ... run engram-server` / `.venv/bin/engram-server` processes. Fresh MCP or CLI calls should reconnect normally.
 
 ### MCP Tools (14)
 
@@ -411,6 +412,7 @@ Engram's storage and retrieval layer is domain-agnostic, but the `proactive()` t
 | **v3.4 Slice B Phase 2 S2** | — | Bidirectional Compost channel: `stream_for_compost` + `invalidate_compost_fact` + CLI `export-stream` |
 | **v3.4 Slice B Phase 2 S3** (current) | dogfood-found duplicate writes | Compost insight structural idempotency (migration 003): partial UNIQUE INDEX on `(origin, root_insight_id, chunk_index)`; `_find_compost_duplicate` in `remember()` returns existing id (PUT semantics, no `_strengthen`) |
 | **Phase 3** | data-driven (lint + ARCH done; tier+GC await >10 compost / first expired) | Extended `engram lint` (expired-still-active + orphan_insight_sources) shipped; ARCHITECTURE.md shipped; recall/proactive tier policy + GC daemon (30-day grace) deferred to data trigger |
+| **Phase 3 ops** | dogfood runtime hygiene | Documented stdio MCP process cleanup; next step is a small stale-process detector or operator script if process accumulation recurs across multiple sessions |
 | **v4** | 500 memories | LLM-powered compile with Planner→Worker→Critic pattern (ToFu-inspired) |
 | **v4.1** | time-sensitive memories >10% | Temporal expiry (degrade, not hide) |
 | **v5** | FTS5 miss evidence | Multi-path recall + LLM reranking |

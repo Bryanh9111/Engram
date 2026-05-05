@@ -22,6 +22,13 @@ local-first on SQLite + FTS5 and exposes operations through:
 - **CLI** (`engram …`, 10 subcommands) — the same operations for humans and scripts
 - **Python API** (`MemoryStore`) — the underlying implementation
 
+Operational health is separate from memory-content hygiene. Runtime health
+means `engram stats` responds, SQLite `quick_check` and `integrity_check`
+return `ok`, and current MCP clients have only the stdio server processes they
+need. `engram lint` may still report stale or missing-evidence memories; those
+are content governance work and should not be bulk-deleted during runtime
+maintenance.
+
 Engram is **not** a chatbot memory, a vector store, a knowledge base, or a
 sync server. It is a queryable brain whose contract is: *memories enter
 context as atomic claims with provenance, and retrieval cost stays constant
