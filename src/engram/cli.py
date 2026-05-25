@@ -142,34 +142,39 @@ def cmd_stats(args, store: MemoryStore) -> None:
 
 def cmd_lint(args, store: MemoryStore) -> None:
     report = store.health(check_stale=True)
+    if args.json:
+        print(json.dumps(report, indent=2))
+        return
+
+    limit = args.limit
     total = report["total_issues"]
     print(f"Engram Lint — {total} issues")
     print("-" * 40)
 
     if report["missing_evidence"]:
         print(f"\nMissing evidence ({len(report['missing_evidence'])}):")
-        for r in report["missing_evidence"][:10]:
+        for r in report["missing_evidence"][:limit]:
             print(f"  [{r['kind']}] {r['id']}: {r['summary'][:60]}")
 
     if report["orphans"]:
         print(f"\nOrphans ({len(report['orphans'])}):")
-        for r in report["orphans"][:10]:
+        for r in report["orphans"][:limit]:
             print(f"  [{r['kind']}] {r['id']}: {r['summary'][:60]}")
 
     if report.get("stale_claims"):
         print(f"\nStale claims ({len(report['stale_claims'])}):")
-        for r in report["stale_claims"][:10]:
+        for r in report["stale_claims"][:limit]:
             print(f"  {r['old_id']} → superseded by {r['new_id']}")
             print(f"    old: {r['old_content'][:60]}")
 
     if report.get("kind_staleness"):
         print(f"\nKind staleness ({len(report['kind_staleness'])}):")
-        for r in report["kind_staleness"][:10]:
+        for r in report["kind_staleness"][:limit]:
             print(f"  [{r['kind']}] {r['id']} (>{r['ttl_days']}d old): {r['summary'][:50]}")
 
     if report.get("expired_still_active"):
         print(f"\nExpired still active ({len(report['expired_still_active'])}):")
-        for r in report["expired_still_active"][:10]:
+        for r in report["expired_still_active"][:limit]:
             print(
                 f"  [{r['kind']}/{r['origin']}] {r['id']} expired={r['expires_at']}: {r['summary'][:50]}"
             )
@@ -181,7 +186,7 @@ def cmd_lint(args, store: MemoryStore) -> None:
         print(
             "  ⚠ memories_compost_map_ad cascade trigger may have regressed."
         )
-        for r in report["orphan_insight_sources"][:10]:
+        for r in report["orphan_insight_sources"][:limit]:
             print(f"  memory_id={r['memory_id']} fact_id={r['fact_id']}")
 
     if total == 0:
@@ -322,7 +327,21 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("dashboard", help="Brain status overview")
 
     # lint
-    sub.add_parser("lint", help="Full health check (missing evidence + orphans + stale + kind TTL)")
+    p_lint = sub.add_parser(
+        "lint",
+        help="Full health check (missing evidence + orphans + stale + kind TTL)",
+    )
+    p_lint.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit the full lint report as JSON for batch hygiene tooling",
+    )
+    p_lint.add_argument(
+        "--limit",
+        type=int,
+        default=10,
+        help="Rows to show per category in text mode (default: 10)",
+    )
 
     # export-stream (Compost batch ingest, JSONL to stdout)
     p_export = sub.add_parser(

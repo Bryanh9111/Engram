@@ -316,6 +316,12 @@ The philosophy: **memories enter context as claims, not documents; with provenan
 
 ```bash
 engram lint
+
+# Machine-readable full report for batch hygiene work
+engram lint --json
+
+# Show more or fewer sample rows per category in text mode
+engram lint --limit 25
 ```
 
 Three checks borrowed from [Karpathy's knowledge base linting](https://x.com/karpathy/status/1911070032680222720):

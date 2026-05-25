@@ -106,3 +106,24 @@ class TestCLI:
         assert "Engram" in result.stdout
         assert "constraint" in result.stdout
         assert "fact" in result.stdout
+
+    def test_lint_json_output(self, tmp_path):
+        db = str(tmp_path / "test.db")
+        run_cli("add", "Constraint without evidence", "--kind", "constraint", env_db=db)
+
+        result = run_cli("lint", "--json", env_db=db)
+
+        assert result.returncode == 0
+        data = json.loads(result.stdout)
+        assert data["missing_evidence"]
+        assert data["total_issues"] >= 1
+
+    def test_lint_limit_controls_text_samples(self, tmp_path):
+        db = str(tmp_path / "test.db")
+        run_cli("add", "First constraint without evidence", "--kind", "constraint", env_db=db)
+        run_cli("add", "Second constraint without evidence", "--kind", "constraint", env_db=db)
+
+        result = run_cli("lint", "--limit", "1", env_db=db)
+
+        assert result.returncode == 0
+        assert result.stdout.count("constraint") >= 1

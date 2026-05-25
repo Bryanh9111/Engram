@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from collections.abc import Iterator
 from datetime import datetime, timezone
@@ -14,6 +15,49 @@ from engram.model import MemoryKind, MemoryObject, MemoryOrigin, MemoryScope, Me
 _NOT_EXPIRED_SQL = (
     "(expires_at IS NULL OR julianday(expires_at) > julianday('now'))"
 )
+
+_FTS_TOKEN_RE = re.compile(r"[\w]+", re.UNICODE)
+
+
+def _quote_fts_token(token: str) -> str:
+    """Quote one FTS5 token so punctuation/user operators stay literal."""
+    return f'"{token.replace(chr(34), chr(34) * 2)}"'
+
+
+def _fts_terms(text: str, *, min_len: int = 2, limit: int | None = None) -> list[str]:
+    """Extract FTS5-safe search terms from user text.
+
+    SQLite FTS5 treats punctuation such as "-" and "." as query syntax. The
+    unicode61 tokenizer stores "8.20.0" and "fast-uri" as separate tokens, so
+    we mirror that tokenization enough for recall without exposing raw user
+    text to MATCH syntax.
+    """
+    terms: list[str] = []
+    seen: set[str] = set()
+    for match in _FTS_TOKEN_RE.finditer(text.lower()):
+        term = match.group(0)
+        if len(term) < min_len or term in seen:
+            continue
+        terms.append(term)
+        seen.add(term)
+        if limit is not None and len(terms) >= limit:
+            break
+    return terms
+
+
+def _build_fts_query(
+    text: str,
+    *,
+    operator: str = "OR",
+    min_len: int = 2,
+    limit: int | None = None,
+) -> str | None:
+    """Return a MATCH expression built only from quoted FTS5 tokens."""
+    terms = _fts_terms(text, min_len=min_len, limit=limit)
+    if not terms:
+        return None
+    joiner = f" {operator} " if operator else " "
+    return joiner.join(_quote_fts_token(term) for term in terms)
 
 
 class MemoryStore:
@@ -204,12 +248,10 @@ class MemoryStore:
         self, content: str, project: str | None
     ) -> MemoryObject | None:
         """Check if very similar content already exists using FTS5."""
-        # Extract key words for FTS match (first 10 significant words)
-        words = [w for w in content.split() if len(w) > 2][:10]
-        if not words:
+        # Extract key words for FTS match (first 10 significant words).
+        query = _build_fts_query(content, operator="", min_len=3, limit=10)
+        if not query:
             return None
-
-        query = " ".join(words)
         try:
             rows = self.conn.execute(
                 """SELECT m.id, m.content, m.summary, m.kind, m.origin, m.project,
@@ -312,11 +354,9 @@ class MemoryStore:
 
         if query.strip():
             # FTS5 search with ranking
-            words = [w for w in query.split() if len(w) > 1]
-            if not words:
+            fts_query = _build_fts_query(query, operator="OR", min_len=2)
+            if not fts_query:
                 return self._recall_recent(where_sql, params, limit, budget)
-
-            fts_query = " OR ".join(words)
             sql = f"""
                 SELECT m.id, m.content, m.summary, m.kind, m.origin, m.project,
                        m.path_scope, m.tags, m.confidence, m.evidence_link,
@@ -782,7 +822,9 @@ created_at: {mem.created_at.isoformat()}
             words = list(normalized)[:8]
             if not words:
                 continue
-            fts_query = " OR ".join(words)
+            fts_query = _build_fts_query(" ".join(words), operator="OR", min_len=2)
+            if not fts_query:
+                continue
             try:
                 matches = self.conn.execute(
                     """SELECT m.id, m.content, m.created_at

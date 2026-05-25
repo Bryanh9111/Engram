@@ -215,6 +215,26 @@ class TestRecall:
         results = populated_store.recall("xyzzy_nonexistent_term_42")
         assert len(results) == 0
 
+    def test_recall_handles_punctuation_versions_and_hashes(self, store):
+        mem = store.remember(
+            content=(
+                "Compost health/audit hardening commit "
+                "e7cef99f71d843dad8df120060d765bf916c0333 pinned "
+                "ajv 8.20.0 fast-uri 3.1.2 qs 6.15.2 and "
+                "0023_integrity_observation_indexes"
+            ),
+            kind=MemoryKind.FACT,
+            project="compost",
+        )
+
+        results = store.recall(
+            "health/audit e7cef99f71d843dad8df120060d765bf916c0333 "
+            "ajv 8.20.0 fast-uri 3.1.2",
+            project="compost",
+        )
+
+        assert any(result.id == mem.id for result in results)
+
     def test_recall_by_path_scope(self, populated_store):
         results = populated_store.recall("", path_scope="migrations/*")
         assert len(results) >= 1
