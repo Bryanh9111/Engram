@@ -144,14 +144,15 @@ uv run engram-server  # 启动 MCP server
 - `stream_for_compost(since?, kinds?, project?, include_compost=False, limit=1000)` — 契约投影导出供 Compost 摄取；默认排除 origin=compost 防 feedback loop
 - `invalidate_compost_fact(fact_ids)` — Compost 端上游事实失效时软删对应 insight；忽略 pinned（Compost 是 insight 新鲜度权威）
 
-## CLI (10 commands)
+## CLI (11 commands)
 
 ```bash
-engram add/search/forget/unpin/candidates/stats/dashboard/lint/export-stream
+engram add/search/forget/unpin/candidates/stats/dashboard/lint/backup/export-stream
 ```
 
 - `dashboard` — 记忆脑全局状态（项目分布/kind分布/健康/近24h活动/热门记忆）
-- `lint` — 全面健康检查（缺证据+孤岛+stale claims+kind-specific TTL）
+- `lint` — 全面健康检查（缺证据+孤岛+stale claims+kind-specific TTL）；`--summary` 输出低 token 分桶计数
+- `backup` — 使用 SQLite backup API 创建在线备份并默认验证 quick_check/integrity_check
 - `unpin` — 单条解除 pinned（默认交互确认，`--yes` 脚本模式）
 - `export-stream` — Compost 批量摄取 JSONL 流，与 MCP `stream_for_compost` 同 handler
 

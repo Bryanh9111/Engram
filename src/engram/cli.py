@@ -5,7 +5,10 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sqlite3
 import sys
+from collections import Counter
+from datetime import datetime, timezone
 from pathlib import Path
 
 from engram.model import MemoryKind, MemoryStatus
@@ -35,6 +38,61 @@ def _memory_to_dict(mem) -> dict:
         "pinned": mem.pinned,
         "created_at": mem.created_at.isoformat(),
     }
+
+
+_LINT_CATEGORIES = (
+    "missing_evidence",
+    "orphans",
+    "stale_claims",
+    "kind_staleness",
+    "expired_still_active",
+    "orphan_insight_sources",
+)
+
+
+def _counter_dict(values) -> dict[str, int]:
+    return dict(sorted(Counter(v for v in values if v).items()))
+
+
+def _lint_summary(report: dict) -> dict:
+    categories = {}
+    for key in _LINT_CATEGORIES:
+        rows = report.get(key) or []
+        entry = {"count": len(rows)}
+        by_kind = _counter_dict(r.get("kind") for r in rows if isinstance(r, dict))
+        by_project = _counter_dict(
+            (r.get("project") or "(none)") for r in rows
+            if isinstance(r, dict) and "project" in r
+        )
+        if by_kind:
+            entry["by_kind"] = by_kind
+        if by_project:
+            entry["by_project"] = by_project
+        categories[key] = entry
+    return {
+        "total_issues": report["total_issues"],
+        "categories": categories,
+    }
+
+
+def _print_lint_summary(summary: dict) -> None:
+    print(f"Engram Lint Summary — {summary['total_issues']} issues")
+    print("-" * 40)
+    for key, entry in summary["categories"].items():
+        print(f"{key}: {entry['count']}")
+        if entry.get("by_kind"):
+            kinds = ", ".join(f"{k}={v}" for k, v in entry["by_kind"].items())
+            print(f"  by_kind: {kinds}")
+        if entry.get("by_project"):
+            projects = ", ".join(
+                f"{k}={v}" for k, v in list(entry["by_project"].items())[:10]
+            )
+            print(f"  by_project: {projects}")
+
+
+def _default_backup_path(db_path: str) -> Path:
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+    return Path(db_path).expanduser().parent / "backups" / f"{timestamp}-engram.db"
 
 
 def cmd_add(args, store: MemoryStore) -> None:
@@ -142,6 +200,14 @@ def cmd_stats(args, store: MemoryStore) -> None:
 
 def cmd_lint(args, store: MemoryStore) -> None:
     report = store.health(check_stale=True)
+    if args.summary:
+        summary = _lint_summary(report)
+        if args.json:
+            print(json.dumps(summary, indent=2))
+        else:
+            _print_lint_summary(summary)
+        return
+
     if args.json:
         print(json.dumps(report, indent=2))
         return
@@ -191,6 +257,67 @@ def cmd_lint(args, store: MemoryStore) -> None:
 
     if total == 0:
         print("\nAll clean.")
+
+
+def cmd_backup(args, store: MemoryStore) -> None:
+    if args.output and args.backup_dir:
+        print("--output and --backup-dir are mutually exclusive", file=sys.stderr)
+        raise SystemExit(2)
+
+    dest = (
+        Path(args.output).expanduser()
+        if args.output
+        else (
+            Path(args.backup_dir).expanduser() / _default_backup_path(args.db_path).name
+            if args.backup_dir
+            else _default_backup_path(args.db_path)
+        )
+    )
+    if dest.exists() and not args.overwrite:
+        print(f"Backup already exists: {dest}", file=sys.stderr)
+        raise SystemExit(1)
+
+    dest.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+    try:
+        store.conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
+    except sqlite3.DatabaseError:
+        pass
+
+    dest_conn = sqlite3.connect(dest)
+    try:
+        store.conn.backup(dest_conn)
+        dest_conn.commit()
+    finally:
+        dest_conn.close()
+
+    try:
+        os.chmod(dest, 0o600)
+    except PermissionError:
+        pass
+
+    verified = False
+    if not args.no_verify:
+        verify_conn = sqlite3.connect(dest)
+        try:
+            quick = verify_conn.execute("PRAGMA quick_check").fetchone()[0]
+            integrity = verify_conn.execute("PRAGMA integrity_check").fetchone()[0]
+            verified = quick == "ok" and integrity == "ok"
+        finally:
+            verify_conn.close()
+        if not verified:
+            print(f"Backup verification failed: {dest}", file=sys.stderr)
+            raise SystemExit(1)
+
+    result = {
+        "path": str(dest),
+        "bytes": dest.stat().st_size,
+        "verified": verified,
+    }
+    if args.json:
+        print(json.dumps(result, indent=2))
+    else:
+        suffix = " (verified)" if verified else ""
+        print(f"Backed up Engram DB to {dest}{suffix}")
 
 
 def cmd_export_stream(args, store: MemoryStore) -> None:
@@ -342,6 +469,36 @@ def build_parser() -> argparse.ArgumentParser:
         default=10,
         help="Rows to show per category in text mode (default: 10)",
     )
+    p_lint.add_argument(
+        "--summary",
+        action="store_true",
+        help="Emit compact category counts instead of full lint rows",
+    )
+
+    # backup
+    p_backup = sub.add_parser(
+        "backup",
+        help="Create an online SQLite backup of the Engram database",
+    )
+    p_backup.add_argument(
+        "--output",
+        help="Exact backup file path (default: <db-dir>/backups/<timestamp>-engram.db)",
+    )
+    p_backup.add_argument(
+        "--backup-dir",
+        help="Directory for timestamped backup file (mutually exclusive with --output)",
+    )
+    p_backup.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Allow replacing an existing --output file",
+    )
+    p_backup.add_argument(
+        "--no-verify",
+        action="store_true",
+        help="Skip quick_check/integrity_check on the backup copy",
+    )
+    p_backup.add_argument("--json", action="store_true")
 
     # export-stream (Compost batch ingest, JSONL to stdout)
     p_export = sub.add_parser(
@@ -374,12 +531,14 @@ def main(argv: list[str] | None = None) -> None:
     db_path = _get_db_path()
     _ensure_db_dir(db_path)
     store = MemoryStore(db_path)
+    args.db_path = db_path
 
     try:
         {"add": cmd_add, "search": cmd_search, "forget": cmd_forget,
          "unpin": cmd_unpin,
          "candidates": cmd_candidates, "stats": cmd_stats,
          "dashboard": cmd_dashboard, "lint": cmd_lint,
+         "backup": cmd_backup,
          "export-stream": cmd_export_stream}[args.command](args, store)
     finally:
         store.close()

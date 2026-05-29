@@ -651,7 +651,7 @@ created_at: {mem.created_at.isoformat()}
         """
         # Missing evidence: constraint/guardrail without evidence_link
         missing = self.conn.execute(
-            """SELECT id, summary, kind FROM memories
+            """SELECT id, summary, kind, project FROM memories
                WHERE status = 'active'
                  AND kind IN ('constraint', 'guardrail')
                  AND (evidence_link IS NULL OR evidence_link = '')"""
@@ -659,7 +659,7 @@ created_at: {mem.created_at.isoformat()}
 
         # Orphans: access_count=0, old, not pinned
         orphans_rows = self.conn.execute(
-            """SELECT id, summary, kind FROM memories
+            """SELECT id, summary, kind, project FROM memories
                WHERE status = 'active'
                  AND pinned = 0
                  AND access_count = 0
@@ -700,10 +700,12 @@ created_at: {mem.created_at.isoformat()}
         # Full mode for CLI: complete lists
         result = {
             "missing_evidence": [
-                {"id": r[0], "summary": r[1], "kind": r[2]} for r in missing
+                {"id": r[0], "summary": r[1], "kind": r[2], "project": r[3]}
+                for r in missing
             ],
             "orphans": [
-                {"id": r[0], "summary": r[1], "kind": r[2]} for r in orphans_rows
+                {"id": r[0], "summary": r[1], "kind": r[2], "project": r[3]}
+                for r in orphans_rows
             ],
             "expired_still_active": expired_still_active,
             "orphan_insight_sources": orphan_insight_sources,

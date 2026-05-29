@@ -257,6 +257,8 @@ uv run engram add "..."   --kind constraint --project myproj --path-scope "src/*
 uv run engram search "auth bug" --project myproj --limit 5
 uv run engram dashboard                  # Full brain overview
 uv run engram lint                        # Health check
+uv run engram lint --summary              # Compact hygiene counts for triage
+uv run engram backup                      # Verified SQLite backup
 uv run engram forget <memory-id>          # Soft-delete
 uv run engram stats                       # Quick stats
 uv run engram candidates                  # Archive candidates
@@ -273,7 +275,7 @@ Claude Code calls these automatically via MCP when connected. You do not need to
 - **MCP tools not appearing in Claude Code** — Run `claude mcp list` to check engram is registered and shows `✓ Connected`. If missing, re-run Step 4 (with `-s user`!). If `✗ Failed`, run `uv run engram-server` manually from the Engram directory to see the error. Fully restart Claude Code after fixing.
 - **Tests failing** — Run `uv sync --extra dev --extra mcp` to ensure all dev dependencies are installed
 - **Database location** — Default is `~/.engram/engram.db`. Engram creates `~/.engram` as owner-only (`0700`) and the SQLite files as owner-readable/writable (`0600`). Override with `export ENGRAM_DB=/path/to/custom.db`
-- **Backup** — The database is a single SQLite file. Copy `~/.engram/engram.db` (plus `.db-wal` and `.db-shm` if present) to back up. Restore by copying back.
+- **Backup** — Run `engram backup` for an online SQLite backup under `~/.engram/backups/`. It uses SQLite's backup API, then verifies the copy with `quick_check` and `integrity_check`. Restore by copying the backup back to `~/.engram/engram.db` while Engram clients are stopped.
 - **Many `engram-server` processes** — Engram MCP is stdio-based, so each active client may own a server process. More than a few idle copies usually means old agent sessions were not reaped. Confirm the DB is healthy with `sqlite3 ~/.engram/engram.db "pragma quick_check; pragma integrity_check;"`, then terminate stale `uv --directory ... run engram-server` / `.venv/bin/engram-server` processes. Fresh MCP or CLI calls should reconnect normally.
 
 ### MCP Tools (14)
@@ -317,11 +319,17 @@ The philosophy: **memories enter context as claims, not documents; with provenan
 ```bash
 engram lint
 
+# Compact machine-readable counts for routine triage
+engram lint --summary --json
+
 # Machine-readable full report for batch hygiene work
 engram lint --json
 
 # Show more or fewer sample rows per category in text mode
 engram lint --limit 25
+
+# Online verified SQLite backup
+engram backup
 ```
 
 Three checks borrowed from [Karpathy's knowledge base linting](https://x.com/karpathy/status/1911070032680222720):

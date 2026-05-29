@@ -127,3 +127,39 @@ class TestCLI:
 
         assert result.returncode == 0
         assert result.stdout.count("constraint") >= 1
+
+    def test_lint_summary_json_output(self, tmp_path):
+        db = str(tmp_path / "test.db")
+        run_cli("add", "Constraint without evidence", "--kind", "constraint", env_db=db)
+
+        result = run_cli("lint", "--summary", "--json", env_db=db)
+
+        assert result.returncode == 0
+        data = json.loads(result.stdout)
+        assert data["total_issues"] >= 1
+        assert data["categories"]["missing_evidence"]["count"] == 1
+        assert data["categories"]["missing_evidence"]["by_kind"]["constraint"] == 1
+        assert "summary" not in result.stdout
+
+    def test_lint_summary_text_output(self, tmp_path):
+        db = str(tmp_path / "test.db")
+        run_cli("add", "Constraint without evidence", "--kind", "constraint", env_db=db)
+
+        result = run_cli("lint", "--summary", env_db=db)
+
+        assert result.returncode == 0
+        assert "Engram Lint Summary" in result.stdout
+        assert "missing_evidence: 1" in result.stdout
+
+    def test_backup_creates_verified_sqlite_copy(self, tmp_path):
+        db = str(tmp_path / "test.db")
+        backup = tmp_path / "backup.db"
+        run_cli("add", "Backup source memory", "--kind", "fact", env_db=db)
+
+        result = run_cli("backup", "--output", str(backup), "--json", env_db=db)
+
+        assert result.returncode == 0
+        data = json.loads(result.stdout)
+        assert data["verified"] is True
+        assert data["path"] == str(backup)
+        assert backup.exists()
