@@ -150,6 +150,15 @@ class TestParameterForwarding:
         assert len(entries) == 1
         assert entries[0]["project"] == "pay"
 
+    def test_project_filter_normalizes_case(self, store):
+        from engram.server import _handle_stream_for_compost
+
+        store.remember(content="helios entry", kind=MemoryKind.FACT, project="helios")
+        store.remember(content="engram entry", kind=MemoryKind.FACT, project="engram")
+        entries = _handle_stream_for_compost(store, project="Helios")
+        assert len(entries) == 1
+        assert entries[0]["project"] == "helios"
+
     def test_compost_excluded_by_default(self, store):
         from engram.server import _handle_stream_for_compost
 

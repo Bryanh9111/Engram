@@ -34,6 +34,24 @@ class TestMCPTools:
         assert len(result) >= 1
         assert "Redis" in result[0]["content"]
 
+    def test_recall_tool_normalizes_project_filter_case(self, tmp_path):
+        from engram.server import _handle_recall, _handle_remember
+
+        store = MemoryStore(str(tmp_path / "test.db"))
+        _handle_remember(
+            store,
+            content="Signal workflow keeps calibration history",
+            kind="guardrail",
+            project="helios",
+        )
+        result = _handle_recall(
+            store,
+            query="Signal calibration",
+            project="Helios",
+        )
+        assert len(result) == 1
+        assert result[0]["project"] == "helios"
+
     def test_forget_tool(self, tmp_path):
         from engram.server import _handle_forget, _handle_remember
 

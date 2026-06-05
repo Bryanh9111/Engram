@@ -60,6 +60,14 @@ def _build_fts_query(
     return joiner.join(_quote_fts_token(term) for term in terms)
 
 
+def _normalize_project(project: str | None) -> str | None:
+    """Canonicalize project keys for all read/write filters."""
+    if project is None:
+        return None
+    normalized = project.strip().lower()
+    return normalized or None
+
+
 class MemoryStore:
     def __init__(self, db_path: str = "engram.db"):
         self.conn = init_db(db_path)
@@ -106,8 +114,7 @@ class MemoryStore:
         compost rows lacking the structural key.
         """
         tags = tags or []
-        if project:
-            project = project.lower()
+        project = _normalize_project(project)
 
         # Compost structural dedup path (debate 024)
         if origin == MemoryOrigin.COMPOST and source_trace:
@@ -331,6 +338,8 @@ class MemoryStore:
         """
         if budget == "deep":
             limit = max(limit, 50)
+
+        project = _normalize_project(project)
 
         params: list = []
         where_clauses: list[str] = []
@@ -561,6 +570,7 @@ class MemoryStore:
 
     def compile(self, project: str) -> str:
         """Compile all active memories for a project into structured Markdown. No LLM."""
+        project = _normalize_project(project) or project
         rows = self.conn.execute(
             f"""SELECT kind, content, summary, pinned, evidence_link
                FROM memories
@@ -882,6 +892,7 @@ created_at: {mem.created_at.isoformat()}
         Expiry filter: entries past expires_at are never yielded (mirrors
         memory_scores view behavior).
         """
+        project = _normalize_project(project)
         where: list[str] = [
             "status IN ('active', 'resolved')",
             "(expires_at IS NULL OR julianday(expires_at) > julianday('now'))",

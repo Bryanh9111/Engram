@@ -40,6 +40,20 @@ class TestCLI:
         assert result.returncode == 0
         assert "Redis" in result.stdout
 
+    def test_search_normalizes_project_filter_case(self, tmp_path):
+        db = str(tmp_path / "test.db")
+        run_cli(
+            "add",
+            "Signal workflow keeps calibration history",
+            "--kind", "guardrail",
+            "--project", "helios",
+            env_db=db,
+        )
+        result = run_cli("search", "Signal calibration", "--project", "Helios", env_db=db)
+        assert result.returncode == 0
+        assert "Signal workflow" in result.stdout
+        assert "project: helios" in result.stdout
+
     def test_forget_memory(self, tmp_path):
         db = str(tmp_path / "test.db")
         # Add and capture ID

@@ -264,6 +264,10 @@ uv run engram stats                       # Quick stats
 uv run engram candidates                  # Archive candidates
 ```
 
+Project names are canonicalized with `strip().lower()` on both write and read
+paths. For example, `--project Helios` and `--project helios` refer to the same
+project.
+
 ### MCP (for Claude Code)
 
 Claude Code calls these automatically via MCP when connected. You do not need to invoke them manually — just chat with Claude normally and it will `remember()` / `recall()` / `proactive()` as appropriate. The global CLAUDE.md instructions guide when to capture memories.

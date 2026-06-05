@@ -186,6 +186,26 @@ class TestRecall:
         for r in results:
             assert r.project == "search"
 
+    def test_recall_normalizes_project_filter_case(self, store):
+        store.remember(
+            content="Signal workflow keeps calibration history for weekly reports",
+            kind=MemoryKind.GUARDRAIL,
+            project="helios",
+        )
+        results = store.recall("Signal calibration weekly", project="Helios")
+        assert len(results) == 1
+        assert results[0].project == "helios"
+
+    def test_recall_recent_normalizes_project_filter_case(self, store):
+        store.remember(
+            content="Opportunity tracker keeps first alert and latest status",
+            kind=MemoryKind.GUARDRAIL,
+            project="helios",
+        )
+        results = store.recall("", project="Helios")
+        assert len(results) == 1
+        assert results[0].project == "helios"
+
     def test_recall_filters_by_kind(self, populated_store):
         results = populated_store.recall("", kind=MemoryKind.GUARDRAIL)
         assert all(r.kind == MemoryKind.GUARDRAIL for r in results)
@@ -711,6 +731,11 @@ class TestCompile:
         assert "# backend" in result
         assert "constraint" in result or "decision" in result or "procedure" in result
 
+    def test_compile_normalizes_project_filter_case(self, populated_store):
+        result = populated_store.compile("Backend")
+        assert "# backend" in result
+        assert "Redis" in result
+
     def test_compile_groups_by_kind(self, populated_store):
         result = populated_store.compile("backend")
         # Should have kind headers
@@ -827,6 +852,6 @@ class TestWriteTemplates:
         mem = store.remember(
             content="Project names should be lowercase",
             kind=MemoryKind.FACT,
-            project="MyProject",
+            project=" MyProject ",
         )
         assert mem.project == "myproject"

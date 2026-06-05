@@ -122,6 +122,13 @@ class TestStreamEntriesFilters:
         assert len(entries) == 1
         assert entries[0].project == "pay"
 
+    def test_project_filter_normalizes_case(self, store):
+        store.remember(content="helios rule", kind=MemoryKind.FACT, project="helios")
+        store.remember(content="compost rule", kind=MemoryKind.FACT, project="compost")
+        entries = list(store.stream_entries(project="Helios"))
+        assert len(entries) == 1
+        assert entries[0].project == "helios"
+
     def test_kinds_none_means_all_kinds(self, store):
         store.remember(content="fact entry", kind=MemoryKind.FACT, project="p1")
         store.remember(content="decision entry", kind=MemoryKind.DECISION, project="p1")

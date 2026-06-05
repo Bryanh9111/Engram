@@ -155,6 +155,7 @@ engram add/search/forget/unpin/candidates/stats/dashboard/lint/backup/export-str
 - `backup` — 使用 SQLite backup API 创建在线备份并默认验证 quick_check/integrity_check
 - `unpin` — 单条解除 pinned（默认交互确认，`--yes` 脚本模式）
 - `export-stream` — Compost 批量摄取 JSONL 流，与 MCP `stream_for_compost` 同 handler
+- `project` 名称在写入和读取路径都会执行 `strip().lower()`；`Helios` 与 `helios` 是同一项目，不要用大小写区分命名空间
 
 ## Kind-Specific Staleness TTL
 
