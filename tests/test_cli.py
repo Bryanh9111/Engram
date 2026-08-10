@@ -177,3 +177,84 @@ class TestCLI:
         assert data["verified"] is True
         assert data["path"] == str(backup)
         assert backup.exists()
+
+    def test_gc_dry_run_and_maintenance_backup_first(self, tmp_path):
+        import sqlite3
+
+        db = str(tmp_path / "test.db")
+        backup_dir = tmp_path / "backups"
+        add = run_cli(
+            "add",
+            "Compost pointer ready for GC",
+            "--kind", "insight",
+            "--origin", "compost",
+            "--scope", "global",
+            "--source-trace", '{"compost_fact_ids":["fact-old"]}',
+            "--expires-at", "2020-01-01T00:00:00+00:00",
+            env_db=db,
+        )
+        assert add.returncode == 0
+
+        dry_run = run_cli("gc", "--dry-run", "--json", env_db=db)
+        assert dry_run.returncode == 0
+        assert json.loads(dry_run.stdout)["eligible_count"] == 1
+
+        maintenance = run_cli(
+            "maintenance",
+            "--backup-dir", str(backup_dir),
+            "--retention", "2",
+            "--json",
+            env_db=db,
+        )
+        assert maintenance.returncode == 0
+        data = json.loads(maintenance.stdout)
+        assert data["backup"]["verified"] is True
+        assert data["gc"]["deleted_count"] == 1
+        assert data["project_repairs"]["repaired_count"] == 0
+        backup_path = data["backup"]["path"]
+        with sqlite3.connect(backup_path) as backup_conn:
+            assert backup_conn.execute(
+                "SELECT COUNT(*) FROM memories WHERE origin = 'compost'"
+            ).fetchone()[0] == 1
+        with sqlite3.connect(db) as live_conn:
+            assert live_conn.execute(
+                "SELECT COUNT(*) FROM memories WHERE origin = 'compost'"
+            ).fetchone()[0] == 0
+
+    def test_maintenance_prunes_only_timestamped_backups(self, tmp_path):
+        db = str(tmp_path / "test.db")
+        backup_dir = tmp_path / "backups"
+        backup_dir.mkdir()
+        for name in ("20200101000000-engram.db", "20200102000000-engram.db"):
+            (backup_dir / name).write_bytes(b"old")
+        manual = backup_dir / "before-upgrade.db"
+        manual.write_bytes(b"keep")
+
+        result = run_cli(
+            "maintenance",
+            "--backup-dir", str(backup_dir),
+            "--retention", "1",
+            "--dry-run-gc",
+            "--json",
+            env_db=db,
+        )
+
+        assert result.returncode == 0
+        data = json.loads(result.stdout)
+        assert len(data["pruned_backups"]) == 2
+        assert manual.exists()
+        assert len(list(backup_dir.glob("??????????????-engram.db"))) == 1
+
+    def test_misses_json_reports_candidate_count(self, tmp_path):
+        db = str(tmp_path / "test.db")
+        run_cli(
+            "add", "Helios workflow baseline", "--kind", "fact", "--project", "helios",
+            env_db=db,
+        )
+        run_cli("search", "semantically unrelated phrase", "--project", "helios", env_db=db)
+
+        result = run_cli("misses", "--days", "30", "--json", env_db=db)
+
+        assert result.returncode == 0
+        data = json.loads(result.stdout)
+        assert data["candidate_fts_gap_count"] == 1

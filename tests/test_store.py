@@ -125,6 +125,15 @@ class TestRemember:
         ).fetchone()
         assert rows[0] == 1
 
+    def test_remember_normalizes_absolute_project_path_to_basename(self, store):
+        mem = store.remember(
+            content="Path-shaped project identifiers should not split namespaces",
+            kind=MemoryKind.FACT,
+            project="/Users/example/Repos/Zylo/Helios/",
+        )
+
+        assert mem.project == "helios"
+
 
 @pytest.fixture
 def populated_store(store):
@@ -701,6 +710,168 @@ class TestExtendedLint:
         report = store.health()
         # 1 expired + 1 orphan map row = 2 minimum
         assert report["total_issues"] >= 2
+
+
+class TestCompostGarbageCollection:
+    def _remember_compost(self, store, content, *, fact_id, expires_at):
+        from engram.model import MemoryOrigin, MemoryScope
+
+        return store.remember(
+            content=content,
+            kind=MemoryKind.INSIGHT,
+            origin=MemoryOrigin.COMPOST,
+            scope=MemoryScope.GLOBAL,
+            source_trace={"compost_fact_ids": [fact_id]},
+            expires_at=expires_at,
+        )
+
+    def test_gc_dry_run_reports_only_compost_past_grace(self, store):
+        from datetime import datetime, timedelta, timezone
+
+        now = datetime.now(timezone.utc)
+        eligible = self._remember_compost(
+            store,
+            "Expired Compost pointer eligible for collection",
+            fact_id="old-fact",
+            expires_at=now - timedelta(days=31),
+        )
+        recent = self._remember_compost(
+            store,
+            "Expired Compost pointer still inside grace",
+            fact_id="recent-fact",
+            expires_at=now - timedelta(days=29),
+        )
+        human = store.remember(
+            content="Human memory with an old explicit expiry",
+            kind=MemoryKind.FACT,
+            project="safety",
+        )
+        store.conn.execute(
+            "UPDATE memories SET expires_at = datetime('now', '-90 days') WHERE id = ?",
+            (human.id,),
+        )
+        store.conn.commit()
+
+        result = store.gc_expired_compost(grace_days=30, dry_run=True)
+
+        assert result["eligible_count"] == 1
+        assert result["deleted_count"] == 0
+        assert result["eligible_ids"] == [eligible.id]
+        assert store.conn.execute("SELECT 1 FROM memories WHERE id = ?", (eligible.id,)).fetchone()
+        assert store.conn.execute("SELECT 1 FROM memories WHERE id = ?", (recent.id,)).fetchone()
+        assert store.conn.execute("SELECT 1 FROM memories WHERE id = ?", (human.id,)).fetchone()
+
+    def test_gc_deletes_eligible_row_map_and_fts_with_audit(self, store):
+        from datetime import datetime, timedelta, timezone
+
+        mem = self._remember_compost(
+            store,
+            "Expired Compost insight with searchable canary token",
+            fact_id="fact-gc",
+            expires_at=datetime.now(timezone.utc) - timedelta(days=45),
+        )
+
+        result = store.gc_expired_compost(grace_days=30)
+
+        assert result["deleted_count"] == 1
+        assert result["deleted_ids"] == [mem.id]
+        assert store.conn.execute("SELECT 1 FROM memories WHERE id = ?", (mem.id,)).fetchone() is None
+        assert store.conn.execute(
+            "SELECT 1 FROM compost_insight_sources WHERE memory_id = ?", (mem.id,)
+        ).fetchone() is None
+        assert store.conn.execute(
+            "SELECT COUNT(*) FROM memories_fts WHERE memories_fts MATCH 'canary'"
+        ).fetchone()[0] == 0
+        audit = store.conn.execute(
+            "SELECT op, detail FROM ops_log WHERE memory_id = ? ORDER BY id DESC LIMIT 1",
+            (mem.id,),
+        ).fetchone()
+        assert audit[0] == "gc_expired_compost"
+        assert '"grace_days": 30' in audit[1]
+
+    def test_gc_ignores_obsolete_compost_rows(self, store):
+        from datetime import datetime, timedelta, timezone
+
+        mem = self._remember_compost(
+            store,
+            "Obsolete Compost insight retained for invalidation history",
+            fact_id="fact-obsolete",
+            expires_at=datetime.now(timezone.utc) - timedelta(days=60),
+        )
+        store.conn.execute("UPDATE memories SET status = 'obsolete' WHERE id = ?", (mem.id,))
+        store.conn.commit()
+
+        result = store.gc_expired_compost(grace_days=30)
+
+        assert result["eligible_count"] == 0
+        assert store.conn.execute("SELECT 1 FROM memories WHERE id = ?", (mem.id,)).fetchone()
+
+
+class TestProjectRepair:
+    def test_repairs_legacy_absolute_project_paths_with_audit(self, store):
+        mem = store.remember(
+            content="Legacy project path row",
+            kind=MemoryKind.FACT,
+            project="temporary",
+        )
+        store.conn.execute(
+            "UPDATE memories SET project = ? WHERE id = ?",
+            ("/workspace/Repos/Zylo/Helios", mem.id),
+        )
+        store.conn.commit()
+
+        result = store.repair_project_names()
+
+        assert result == {
+            "repaired_count": 1,
+            "repairs": [
+                {
+                    "memory_id": mem.id,
+                    "from": "/workspace/Repos/Zylo/Helios",
+                    "to": "helios",
+                }
+            ],
+        }
+        assert store.conn.execute(
+            "SELECT project FROM memories WHERE id = ?", (mem.id,)
+        ).fetchone()[0] == "helios"
+        audit = store.conn.execute(
+            "SELECT op, detail FROM ops_log WHERE memory_id = ? ORDER BY id DESC LIMIT 1",
+            (mem.id,),
+        ).fetchone()
+        assert audit[0] == "normalize_project"
+        assert '"from": "/workspace/Repos/Zylo/Helios"' in audit[1]
+
+
+class TestRecallMissReport:
+    def test_classifies_id_no_project_and_candidate_fts_misses(self, store):
+        store.remember(
+            content="Helios calibration workflow baseline",
+            kind=MemoryKind.FACT,
+            project="helios",
+        )
+        store.recall("abcdef123456", project="helios")
+        store.recall("unknown bootstrap", project="empty-project")
+        store.recall("future opportunity semantic wording", project="helios")
+        store.recall("future opportunity semantic wording", project="helios")
+
+        report = store.recall_miss_report(days=30)
+
+        by_query = {row["query_norm"]: row for row in report["rows"]}
+        assert by_query["abcdef123456"]["classification"] == "memory_id_lookup"
+        assert by_query["unknown bootstrap"]["classification"] == "no_project_memories"
+        candidate = by_query["future opportunity semantic wording"]
+        assert candidate["classification"] == "candidate_fts_gap"
+        assert candidate["hits"] == 2
+        assert candidate["active_project_memories"] == 1
+        assert report["candidate_fts_gap_count"] == 1
+        assert report["candidate_fts_gap_hits"] == 2
+
+    def test_recall_miss_report_validates_arguments(self, store):
+        with pytest.raises(ValueError, match="days"):
+            store.recall_miss_report(days=0)
+        with pytest.raises(ValueError, match="limit"):
+            store.recall_miss_report(limit=0)
 
 
 class TestExport:

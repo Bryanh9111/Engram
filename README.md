@@ -259,6 +259,9 @@ uv run engram dashboard                  # Full brain overview
 uv run engram lint                        # Health check
 uv run engram lint --summary              # Compact hygiene counts for triage
 uv run engram backup                      # Verified SQLite backup
+uv run engram gc --dry-run                # Preview expired Compost pointer GC
+uv run engram maintenance --json          # Backup, retention, project repair, GC
+uv run engram misses --days 30             # Classify recall misses before v5/v6
 uv run engram forget <memory-id>          # Soft-delete
 uv run engram stats                       # Quick stats
 uv run engram candidates                  # Archive candidates
@@ -279,7 +282,7 @@ Claude Code calls these automatically via MCP when connected. You do not need to
 - **MCP tools not appearing in Claude Code** — Run `claude mcp list` to check engram is registered and shows `✓ Connected`. If missing, re-run Step 4 (with `-s user`!). If `✗ Failed`, run `uv run engram-server` manually from the Engram directory to see the error. Fully restart Claude Code after fixing.
 - **Tests failing** — Run `uv sync --extra dev --extra mcp` to ensure all dev dependencies are installed
 - **Database location** — Default is `~/.engram/engram.db`. Engram creates `~/.engram` as owner-only (`0700`) and the SQLite files as owner-readable/writable (`0600`). Override with `export ENGRAM_DB=/path/to/custom.db`
-- **Backup** — Run `engram backup` for an online SQLite backup under `~/.engram/backups/`. It uses SQLite's backup API, then verifies the copy with `quick_check` and `integrity_check`. Restore by copying the backup back to `~/.engram/engram.db` while Engram clients are stopped.
+- **Backup and maintenance** — Run `engram backup` for an online SQLite backup under `~/.engram/backups/`. `engram maintenance` creates and verifies that backup first, keeps the newest 30 timestamped backups by default, repairs legacy absolute-path project keys, then collects active `origin=compost` pointers expired beyond the 30-day grace period. Human/agent and obsolete memories are never part of automatic GC. Restore by copying a verified backup back to `~/.engram/engram.db` while Engram clients are stopped.
 - **Many `engram-server` processes** — Engram MCP is stdio-based, so each active client may own a server process. More than a few idle copies usually means old agent sessions were not reaped. Confirm the DB is healthy with `sqlite3 ~/.engram/engram.db "pragma quick_check; pragma integrity_check;"`, then terminate stale `uv --directory ... run engram-server` / `.venv/bin/engram-server` processes. Fresh MCP or CLI calls should reconnect normally.
 
 ### MCP Tools (14)
@@ -334,7 +337,19 @@ engram lint --limit 25
 
 # Online verified SQLite backup
 engram backup
+
+# Daily-safe sequence: verified backup -> retention -> project repair -> Compost TTL GC
+engram maintenance --retention 30 --gc-grace-days 30 --json
+
+# Review retrieval evidence; "candidate" is not a confirmed semantic miss
+engram misses --days 30 --json
 ```
+
+On macOS, [`ops/dev.engram.maintenance.plist.example`](ops/dev.engram.maintenance.plist.example)
+is a launchd template for daily maintenance at 04:30 local time. Replace the
+three `__...__` placeholders, install it under `~/Library/LaunchAgents/`, then
+bootstrap it with `launchctl bootstrap gui/$(id -u) <plist-path>`. The job logs
+JSON results to `~/.engram/maintenance.log`.
 
 Three checks borrowed from [Karpathy's knowledge base linting](https://x.com/karpathy/status/1911070032680222720):
 
@@ -394,11 +409,11 @@ Proactive recall is Engram's signature feature. When you open a file (e.g., `pay
 
 ### Why no embeddings?
 
-At current scale (under 2,000 memories), FTS5 full-text search is faster, cheaper, and more explainable than vector embeddings. Benchmarks from [CatchMe](https://github.com/catchmeai) and Karpathy's LLM Wiki show FTS5 is sufficient at this scale. Engram's roadmap adds sqlite-vec + embeddings at v6 (triggered at 2,000 memories), but we don't force that complexity on smaller deployments. This is a **principled defer**, not an oversight — see the roadmap below.
+The database crossed 2,000 memories in August 2026, but count alone is not retrieval evidence. `engram misses --days 30` classified only three single-hit candidate FTS gaps on the 2026-08-10 baseline; memory-ID lookups and empty project namespaces were separated from real candidates. Engram therefore keeps explainable FTS5 while collecting reviewed miss evidence, and will add sqlite-vec + RRF only when the added index has a demonstrated job. This is a **principled defer**, not an oversight — see the roadmap below.
 
 ### How do I back up Engram's memory?
 
-The entire database is a single SQLite file at `~/.engram/engram.db`. Copy that file (plus `.db-wal` and `.db-shm` if present). Restore by copying back. You can also export to JSONL (lossless) or Markdown (human-readable) with `engram export`.
+Run `engram backup` for a verified SQLite online backup, or `engram maintenance` for the daily backup-first maintenance sequence. Avoid manually copying only the live `.db` file while writers are active. Restore a verified backup while Engram clients are stopped. You can also export to JSONL (lossless) or Markdown (human-readable) with `engram export`.
 
 ### Is Engram production-ready?
 
@@ -429,15 +444,15 @@ Engram's storage and retrieval layer is domain-agnostic, but the `proactive()` t
 | **v3.4 Slice B Phase 2 P0** | — | API surface invariant test + MemoryOrigin enum realignment (HUMAN/AGENT/COMPOST) |
 | **v3.4 Slice B Phase 2 S2** | — | Bidirectional Compost channel: `stream_for_compost` + `invalidate_compost_fact` + CLI `export-stream` |
 | **v3.4 Slice B Phase 2 S3** (current) | dogfood-found duplicate writes | Compost insight structural idempotency (migration 003): partial UNIQUE INDEX on `(origin, root_insight_id, chunk_index)`; `_find_compost_duplicate` in `remember()` returns existing id (PUT semantics, no `_strengthen`) |
-| **Phase 3** | data-driven (lint + ARCH done; tier+GC await >10 compost / first expired) | Extended `engram lint` (expired-still-active + orphan_insight_sources) shipped; ARCHITECTURE.md shipped; recall/proactive tier policy + GC daemon (30-day grace) deferred to data trigger |
+| **Phase 3** | expired Compost entries observed | Extended lint + ARCH shipped; verified-backup-first maintenance, project repair, and auditable 30-day Compost TTL GC shipped; recall/proactive tier policy remains data-triggered |
 | **Phase 3 ops** | dogfood runtime hygiene | Documented stdio MCP process cleanup; next step is a small stale-process detector or operator script if process accumulation recurs across multiple sessions |
 | **v4** | 500 memories | LLM-powered compile with Planner→Worker→Critic pattern (ToFu-inspired) |
 | **v4.1** | time-sensitive memories >10% | Temporal expiry (degrade, not hide) |
-| **v5** | FTS5 miss evidence | Multi-path recall + LLM reranking |
-| **v6** | 2000 memories | Embedding (sqlite-vec) + RRF fusion |
+| **v5** | >5 reviewed FTS5 misses | `engram misses` classifier shipped; 3 single-hit candidates on 2026-08-10, so multi-path recall + LLM reranking remains deferred |
+| **v6** | 2000 memories + demonstrated retrieval need | Count crossed (~2,200 total on 2026-08-10), but embeddings + RRF remain deferred until miss evidence justifies the added operational surface |
 | **v7** | 3000 memories | Memory graph (relationships) + Dream agent |
 
-**Killed ideas** (not in roadmap): Debounced write queue (durability > commit savings), silent auto-delete, blob memories, opaque ranking, background source rewriting.
+**Killed ideas** (not in roadmap): Debounced write queue (durability > commit savings), silent auto-delete of human/agent knowledge, blob memories, opaque ranking, background source rewriting. The narrow `origin=compost` TTL lifecycle is an explicit, audited integration contract rather than general memory deletion.
 
 ## Background
 

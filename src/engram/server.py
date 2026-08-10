@@ -353,8 +353,9 @@ def create_server() -> FastMCP:
         Called by Compost when an underlying fact is superseded or changes.
         Engram reverse-looks-up via compost_insight_sources and soft-deletes
         matching insights regardless of pinned state (Compost is the
-        authority on insight freshness). Physical purge happens later via
-        the Phase 3 GC daemon with a 30-day grace window.
+        authority on insight freshness). Obsolete rows remain as invalidation
+        history; `engram maintenance` only physically collects still-active
+        Compost pointers whose TTL passed the 30-day grace window.
 
         Returns: {invalidated_memory_ids, count}
         """

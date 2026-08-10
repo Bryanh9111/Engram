@@ -23,7 +23,6 @@ import argparse
 import inspect
 import os
 import re
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -71,9 +70,9 @@ def user_settable(schema_columns, whitelist) -> set[str]:
 
 
 @pytest.fixture(scope="module")
-def mcp_remember_params() -> set[str]:
+def mcp_remember_params(tmp_path_factory: pytest.TempPathFactory) -> set[str]:
     """Parameters advertised by the MCP `remember` tool (FastMCP schema)."""
-    os.environ["ENGRAM_DB"] = tempfile.mktemp(suffix=".db")
+    os.environ["ENGRAM_DB"] = str(tmp_path_factory.mktemp("engram-api") / "engram.db")
     from engram.server import create_server
 
     server = create_server()

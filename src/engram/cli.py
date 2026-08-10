@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sqlite3
 import sys
 from collections import Counter
@@ -93,6 +94,68 @@ def _print_lint_summary(summary: dict) -> None:
 def _default_backup_path(db_path: str) -> Path:
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
     return Path(db_path).expanduser().parent / "backups" / f"{timestamp}-engram.db"
+
+
+def _create_backup(
+    store: MemoryStore,
+    dest: Path,
+    *,
+    overwrite: bool = False,
+    verify: bool = True,
+) -> dict:
+    if dest.exists() and not overwrite:
+        raise FileExistsError(f"Backup already exists: {dest}")
+
+    dest.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+    try:
+        store.conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
+    except sqlite3.DatabaseError:
+        pass
+
+    dest_conn = sqlite3.connect(dest)
+    try:
+        store.conn.backup(dest_conn)
+        dest_conn.commit()
+    finally:
+        dest_conn.close()
+
+    try:
+        os.chmod(dest, 0o600)
+    except PermissionError:
+        pass
+
+    verified = False
+    if verify:
+        verify_conn = sqlite3.connect(dest)
+        try:
+            quick = verify_conn.execute("PRAGMA quick_check").fetchone()[0]
+            integrity = verify_conn.execute("PRAGMA integrity_check").fetchone()[0]
+            verified = quick == "ok" and integrity == "ok"
+        finally:
+            verify_conn.close()
+        if not verified:
+            raise RuntimeError(f"Backup verification failed: {dest}")
+
+    return {
+        "path": str(dest),
+        "bytes": dest.stat().st_size,
+        "verified": verified,
+    }
+
+
+def _prune_timestamped_backups(backup_dir: Path, retention: int) -> list[str]:
+    if retention < 1:
+        raise ValueError("retention must be at least 1")
+    pattern = re.compile(r"^\d{14}-engram\.db$")
+    candidates = sorted(
+        (path for path in backup_dir.iterdir() if pattern.fullmatch(path.name)),
+        reverse=True,
+    )
+    pruned = []
+    for path in candidates[retention:]:
+        path.unlink()
+        pruned.append(str(path))
+    return pruned
 
 
 def cmd_add(args, store: MemoryStore) -> None:
@@ -273,51 +336,90 @@ def cmd_backup(args, store: MemoryStore) -> None:
             else _default_backup_path(args.db_path)
         )
     )
-    if dest.exists() and not args.overwrite:
-        print(f"Backup already exists: {dest}", file=sys.stderr)
-        raise SystemExit(1)
-
-    dest.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
     try:
-        store.conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
-    except sqlite3.DatabaseError:
-        pass
+        result = _create_backup(
+            store,
+            dest,
+            overwrite=args.overwrite,
+            verify=not args.no_verify,
+        )
+    except (FileExistsError, RuntimeError) as exc:
+        print(str(exc), file=sys.stderr)
+        raise SystemExit(1) from exc
+    if args.json:
+        print(json.dumps(result, indent=2))
+    else:
+        suffix = " (verified)" if result["verified"] else ""
+        print(f"Backed up Engram DB to {dest}{suffix}")
 
-    dest_conn = sqlite3.connect(dest)
+
+def cmd_gc(args, store: MemoryStore) -> None:
+    result = store.gc_expired_compost(
+        grace_days=args.grace_days,
+        dry_run=args.dry_run,
+    )
+    if args.json:
+        print(json.dumps(result, indent=2))
+        return
+    action = "eligible" if args.dry_run else "deleted"
+    print(
+        f"Compost GC: {result[f'{action}_count']} {action} "
+        f"(grace={result['grace_days']} days)"
+    )
+
+
+def cmd_maintenance(args, store: MemoryStore) -> None:
+    backup_dir = Path(args.backup_dir).expanduser() if args.backup_dir else Path(
+        args.db_path
+    ).expanduser().parent / "backups"
+    dest = backup_dir / _default_backup_path(args.db_path).name
     try:
-        store.conn.backup(dest_conn)
-        dest_conn.commit()
-    finally:
-        dest_conn.close()
+        backup = _create_backup(store, dest, verify=True)
+        pruned = _prune_timestamped_backups(backup_dir, args.retention)
+    except (FileExistsError, RuntimeError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        raise SystemExit(1) from exc
 
-    try:
-        os.chmod(dest, 0o600)
-    except PermissionError:
-        pass
-
-    verified = False
-    if not args.no_verify:
-        verify_conn = sqlite3.connect(dest)
-        try:
-            quick = verify_conn.execute("PRAGMA quick_check").fetchone()[0]
-            integrity = verify_conn.execute("PRAGMA integrity_check").fetchone()[0]
-            verified = quick == "ok" and integrity == "ok"
-        finally:
-            verify_conn.close()
-        if not verified:
-            print(f"Backup verification failed: {dest}", file=sys.stderr)
-            raise SystemExit(1)
-
+    project_repairs = store.repair_project_names()
+    gc_result = store.gc_expired_compost(
+        grace_days=args.gc_grace_days,
+        dry_run=args.dry_run_gc,
+    )
     result = {
-        "path": str(dest),
-        "bytes": dest.stat().st_size,
-        "verified": verified,
+        "backup": backup,
+        "pruned_backups": pruned,
+        "project_repairs": project_repairs,
+        "gc": gc_result,
     }
     if args.json:
         print(json.dumps(result, indent=2))
     else:
-        suffix = " (verified)" if verified else ""
-        print(f"Backed up Engram DB to {dest}{suffix}")
+        print(f"Maintenance backup: {backup['path']} (verified)")
+        print(f"Pruned backups: {len(pruned)}")
+        print(f"Project names repaired: {project_repairs['repaired_count']}")
+        verb = "eligible" if args.dry_run_gc else "deleted"
+        print(f"Compost GC {verb}: {gc_result[f'{verb}_count']}")
+
+
+def cmd_misses(args, store: MemoryStore) -> None:
+    report = store.recall_miss_report(days=args.days, limit=args.limit)
+    if args.json:
+        print(json.dumps(report, indent=2))
+        return
+    print(
+        f"Recall misses ({report['window_days']}d): "
+        f"{report['unique_miss_count']} unique / {report['total_miss_hits']} hits"
+    )
+    print(
+        f"Candidate FTS gaps: {report['candidate_fts_gap_count']} unique / "
+        f"{report['candidate_fts_gap_hits']} hits"
+    )
+    for row in report["rows"]:
+        project = row["project"] or "(all)"
+        print(
+            f"  [{row['classification']}] hits={row['hits']} project={project}: "
+            f"{row['sample_query']}"
+        )
 
 
 def cmd_export_stream(args, store: MemoryStore) -> None:
@@ -500,6 +602,35 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_backup.add_argument("--json", action="store_true")
 
+    # gc
+    p_gc = sub.add_parser(
+        "gc",
+        help="Collect active origin=compost memories expired beyond the grace period",
+    )
+    p_gc.add_argument("--grace-days", type=int, default=30)
+    p_gc.add_argument("--dry-run", action="store_true")
+    p_gc.add_argument("--json", action="store_true")
+
+    # maintenance
+    p_maintenance = sub.add_parser(
+        "maintenance",
+        help="Create a verified backup, prune old backups, then run Compost GC",
+    )
+    p_maintenance.add_argument("--backup-dir")
+    p_maintenance.add_argument("--retention", type=int, default=30)
+    p_maintenance.add_argument("--gc-grace-days", type=int, default=30)
+    p_maintenance.add_argument("--dry-run-gc", action="store_true")
+    p_maintenance.add_argument("--json", action="store_true")
+
+    # misses
+    p_misses = sub.add_parser(
+        "misses",
+        help="Classify recent zero-result recalls for retrieval-gap review",
+    )
+    p_misses.add_argument("--days", type=int, default=30)
+    p_misses.add_argument("--limit", type=int, default=100)
+    p_misses.add_argument("--json", action="store_true")
+
     # export-stream (Compost batch ingest, JSONL to stdout)
     p_export = sub.add_parser(
         "export-stream",
@@ -539,6 +670,8 @@ def main(argv: list[str] | None = None) -> None:
          "candidates": cmd_candidates, "stats": cmd_stats,
          "dashboard": cmd_dashboard, "lint": cmd_lint,
          "backup": cmd_backup,
+         "gc": cmd_gc, "maintenance": cmd_maintenance,
+         "misses": cmd_misses,
          "export-stream": cmd_export_stream}[args.command](args, store)
     finally:
         store.close()

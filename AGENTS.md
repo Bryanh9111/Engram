@@ -13,7 +13,7 @@ src/engram/
   store.py      — MemoryStore: remember/recall/forget/resolve/unpin/consolidate/health/
                   export/stats/micro_index/compile/stream_entries/_map_insight_sources
   proactive.py  — ProactiveRecallEngine: 主动召回 + suppress
-  cli.py        — CLI: add/search/forget/unpin/candidates/stats/dashboard/lint/export-stream
+  cli.py        — CLI: add/search/forget/unpin/candidates/stats/dashboard/lint/backup/gc/maintenance/misses/export-stream
   server.py     — MCP Server (FastMCP, 14 tools)
 tests/
   test_model, test_store, test_proactive, test_cli, test_mcp,
@@ -66,7 +66,7 @@ tests/
 
 ## 永不做清单（GPT-5.4 约束，永久有效）
 
-1. **NO silent auto-delete** — 记忆只能被显式 forget/resolve
+1. **NO silent auto-delete** — human/agent 记忆只能被显式 forget/resolve；唯一例外是契约化 `origin=compost AND status=active` TTL 指针，过期 30 天后由已备份、逐条审计的 maintenance GC 清理
 2. **NO blob memories / wiki dumps** — 保持 atomic claims，不存大段内容（content ≤ 4000 chars，schema 强制）
 3. **NO opaque ranking** — 必须能解释为什么这条记忆浮现
 4. **NO background rewriting** — 不未经人类审核改写源记忆
@@ -144,15 +144,18 @@ uv run engram-server  # 启动 MCP server
 - `stream_for_compost(since?, kinds?, project?, include_compost=False, limit=1000)` — 契约投影导出供 Compost 摄取；默认排除 origin=compost 防 feedback loop
 - `invalidate_compost_fact(fact_ids)` — Compost 端上游事实失效时软删对应 insight；忽略 pinned（Compost 是 insight 新鲜度权威）
 
-## CLI (11 commands)
+## CLI (13 commands)
 
 ```bash
-engram add/search/forget/unpin/candidates/stats/dashboard/lint/backup/export-stream
+engram add/search/forget/unpin/candidates/stats/dashboard/lint/backup/gc/maintenance/misses/export-stream
 ```
 
 - `dashboard` — 记忆脑全局状态（项目分布/kind分布/健康/近24h活动/热门记忆）
 - `lint` — 全面健康检查（缺证据+孤岛+stale claims+kind-specific TTL）；`--summary` 输出低 token 分桶计数
 - `backup` — 使用 SQLite backup API 创建在线备份并默认验证 quick_check/integrity_check
+- `gc` — 仅物理清理 `origin=compost AND status=active` 且过期超过宽限期的短指针；默认 30 天，可 `--dry-run`
+- `maintenance` — 先创建并验证备份，再按保留数裁剪 timestamped backups、修复路径型 project、执行 Compost GC
+- `misses` — 分类近期 recall 零命中（ID lookup / empty project / candidate FTS gap），不把单次 miss 自动当成 embedding 证据
 - `unpin` — 单条解除 pinned（默认交互确认，`--yes` 脚本模式）
 - `export-stream` — Compost 批量摄取 JSONL 流，与 MCP `stream_for_compost` 同 handler
 - `project` 名称在写入和读取路径都会执行 `strip().lower()`；`Helios` 与 `helios` 是同一项目，不要用大小写区分命名空间
@@ -187,20 +190,21 @@ v3.4 Slice B Phase 2 S3 (current) — Compost insight structural idempotency (mi
    ↓
 Phase 3 (按数据触发):
   - recall/proactive 分层 (debate 019 Q5 F) — 触发: 生产 >10 条 origin=compost entry；当前 2 条，deferred
-  - GC daemon — 触发: 见到第一条 expired compost entry (30-day grace per contract)；当前 0 条 expired
+  - Compost TTL GC — 完成：`engram gc` / `engram maintenance`，30-day grace，逐条 `ops_log` 审计，human/agent 永不纳入
   - engram lint 扩展 (compost-specific) — 完成
   - ARCHITECTURE.md origin 不变量文档化 — 完成 (0ee0580)
   - SQLite PRAGMA 审计 (debate 016 Codex I3) — 完成 (a2369cf)
-  - recall_miss_log writer (debate 016 Q4) — 完成 (passive collection, 离线 export 到 Compost 待 v5 trigger)
+  - recall_miss_log writer + `engram misses` classifier (debate 016 Q4) — 完成；2026-08-10 最近 30d 为 3 个 candidate FTS gaps / 3 hits，未过 v5 `>5` trigger
    ↓
 v4 (trigger: 500 memories) — LLM compile with Planner→Worker→Critic
-  ⚠ 当前 941 memories 已穿透 trigger (2026-05-03 MCP stats), 但 Compost Slice B/v4 已承担部分"跨项目 synthesized insight" 职责, v4 scope 需重新评估
+  ⚠ 当前约 2,200 memories 已穿透 trigger (2026-08-10), 但 Compost v4 + calling LLM 已承担按需 synthesis，仍需基于真实检索缺口重评 scope
    ↓
 v4.1 (trigger: 时间敏感 memories >10% 或 >30 条) — Temporal Expiry (A, deferred)
    ↓
 v5 (trigger: >5 FTS5 miss 真实案例) — Multi-path Recall (C) + LLM rerank
    ↓
 v6 (trigger: 2000 memories) — Embedding (sqlite-vec) + RRF fusion
+  ⚠ 数量 trigger 已穿透；当前仅 3 个 candidate FTS gaps 且均单次，先收集/复核 `engram misses`，不因条目数单独引入向量复杂度
    ↓
 v7 (trigger: 3000 memories) — Memory graph + Dream agent
 ```
@@ -212,7 +216,7 @@ v7 (trigger: 3000 memories) — Memory graph + Dream agent
 详见 `../Compost/docs/engram-integration-contract.md`。关键点：
 
 - **Engram → Compost** (事件源): `stream_for_compost` / CLI `export-stream` 以 9-key 契约 shape 流出 `{memory_id, kind, content, project, scope, created_at, updated_at, tags, origin}`；默认 `include_compost=False` 防 feedback loop
-- **Compost → Engram** (失效通道): `invalidate_compost_fact(fact_ids)` 逆查 `compost_insight_sources` 表，软删匹配 insights（忽略 pinned — Compost 是 insight 新鲜度权威）；物理删由 Phase 3 GC daemon 按 30-day grace 处理
+- **Compost → Engram** (失效通道): `invalidate_compost_fact(fact_ids)` 逆查 `compost_insight_sources` 表，软删匹配 insights（忽略 pinned — Compost 是 insight 新鲜度权威）；`engram maintenance` 仅物理清理仍 active 且 TTL 已过 30-day grace 的 Compost 指针，obsolete 失效历史保留
 - **origin=compost 写入要求**: 必须 `kind=insight` + `source_trace` (JSON) + `expires_at` (ISO TTL)，三 CHECK 在 schema 强制
 - **独立性硬约束**: 任一方不可用时另一方功能完整（HC-1）。Engram recall 路径永远零 LLM（HC-2）
 

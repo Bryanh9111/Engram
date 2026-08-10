@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>dev.engram.maintenance</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>__ENGRAM_BIN__</string>
+    <string>maintenance</string>
+    <string>--retention</string>
+    <string>30</string>
+    <string>--gc-grace-days</string>
+    <string>30</string>
+    <string>--json</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>ENGRAM_DB</key>
+    <string>__ENGRAM_DB__</string>
+  </dict>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>4</integer>
+    <key>Minute</key>
+    <integer>30</integer>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>__ENGRAM_HOME__/maintenance.log</string>
+  <key>StandardErrorPath</key>
+  <string>__ENGRAM_HOME__/maintenance.log</string>
+</dict>
+</plist>

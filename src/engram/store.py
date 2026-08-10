@@ -64,7 +64,11 @@ def _normalize_project(project: str | None) -> str | None:
     """Canonicalize project keys for all read/write filters."""
     if project is None:
         return None
-    normalized = project.strip().lower()
+    normalized = project.strip()
+    path_form = normalized.replace("\\", "/").rstrip("/")
+    if path_form.startswith("/") or re.match(r"^[A-Za-z]:/", path_form):
+        normalized = path_form.rsplit("/", 1)[-1]
+    normalized = normalized.lower()
     return normalized or None
 
 
@@ -426,6 +430,73 @@ class MemoryStore:
             (query_norm, project_key, sample),
         )
 
+    def recall_miss_report(self, *, days: int = 30, limit: int = 100) -> dict:
+        """Classify recent zero-result recalls without treating them as proven gaps.
+
+        A miss is only a candidate FTS gap when the requested project already
+        has readable memories. Exact memory-id lookups and empty project
+        namespaces are operational/query-shape issues, not evidence that a
+        semantic retrieval tier is needed.
+        """
+        if days < 1:
+            raise ValueError("days must be at least 1")
+        if limit < 1:
+            raise ValueError("limit must be at least 1")
+
+        active_by_project = {
+            row[0] or "": row[1]
+            for row in self.conn.execute(
+                f"""SELECT COALESCE(project, ''), COUNT(*) FROM memories
+                    WHERE status != 'obsolete' AND {_NOT_EXPIRED_SQL}
+                    GROUP BY COALESCE(project, '')"""
+            ).fetchall()
+        }
+        active_total = sum(active_by_project.values())
+        rows = self.conn.execute(
+            """SELECT query_norm, project, sample_query, first_seen, last_seen, hits
+                 FROM recall_miss_log
+                WHERE julianday(last_seen) >= julianday('now', ?)
+                ORDER BY hits DESC, last_seen DESC, query_norm ASC
+                LIMIT ?""",
+            (f"-{days} days", limit),
+        ).fetchall()
+
+        classified = []
+        for row in rows:
+            query_norm = row[0]
+            project = row[1] or ""
+            project_count = active_by_project.get(project, 0) if project else active_total
+            if re.fullmatch(r"[0-9a-f]{12}", query_norm):
+                classification = "memory_id_lookup"
+            elif project and project_count == 0:
+                classification = "no_project_memories"
+            else:
+                classification = "candidate_fts_gap"
+            classified.append(
+                {
+                    "query_norm": query_norm,
+                    "project": project or None,
+                    "sample_query": row[2],
+                    "first_seen": row[3],
+                    "last_seen": row[4],
+                    "hits": row[5],
+                    "active_project_memories": project_count,
+                    "classification": classification,
+                }
+            )
+
+        candidates = [
+            row for row in classified if row["classification"] == "candidate_fts_gap"
+        ]
+        return {
+            "window_days": days,
+            "unique_miss_count": len(classified),
+            "total_miss_hits": sum(row["hits"] for row in classified),
+            "candidate_fts_gap_count": len(candidates),
+            "candidate_fts_gap_hits": sum(row["hits"] for row in candidates),
+            "rows": classified,
+        }
+
     def _to_card(self, mem: MemoryObject) -> dict:
         """Project a MemoryObject to a compact card (~50 tokens)."""
         return {
@@ -726,6 +797,108 @@ created_at: {mem.created_at.isoformat()}
             result["kind_staleness"] = kind_staleness
         return result
 
+    def gc_expired_compost(
+        self, *, grace_days: int = 30, dry_run: bool = False
+    ) -> dict:
+        """Physically collect expired active Compost pointers after a grace period.
+
+        This narrow TTL lifecycle never includes human/agent origins or
+        non-active rows. Every physical deletion is recorded in ops_log before
+        the row is removed, and SQLite triggers clean the FTS and source map.
+        """
+        if grace_days < 0:
+            raise ValueError("grace_days must be non-negative")
+
+        def eligible_rows():
+            return self.conn.execute(
+                """SELECT id, kind, project, expires_at
+                     FROM memories
+                    WHERE origin = 'compost'
+                      AND status = 'active'
+                      AND expires_at IS NOT NULL
+                      AND julianday(expires_at) <= julianday('now', ?)
+                    ORDER BY expires_at ASC, id ASC""",
+                (f"-{grace_days} days",),
+            ).fetchall()
+
+        rows = eligible_rows()
+        eligible_ids = [row[0] for row in rows]
+        if dry_run:
+            return {
+                "grace_days": grace_days,
+                "dry_run": True,
+                "eligible_count": len(eligible_ids),
+                "eligible_ids": eligible_ids,
+                "deleted_count": 0,
+                "deleted_ids": [],
+            }
+
+        deleted_ids = []
+        with self.conn:
+            for memory_id, kind, project, expires_at in eligible_rows():
+                detail = json.dumps(
+                    {"expires_at": expires_at, "grace_days": grace_days},
+                    sort_keys=True,
+                )
+                self._log_op(
+                    "gc_expired_compost",
+                    memory_id=memory_id,
+                    kind=kind,
+                    project=project,
+                    detail=detail,
+                )
+                cursor = self.conn.execute(
+                    """DELETE FROM memories
+                        WHERE id = ?
+                          AND origin = 'compost'
+                          AND status = 'active'
+                          AND expires_at IS NOT NULL
+                          AND julianday(expires_at) <= julianday('now', ?)""",
+                    (memory_id, f"-{grace_days} days"),
+                )
+                if cursor.rowcount:
+                    deleted_ids.append(memory_id)
+
+        return {
+            "grace_days": grace_days,
+            "dry_run": False,
+            "eligible_count": len(eligible_ids),
+            "eligible_ids": eligible_ids,
+            "deleted_count": len(deleted_ids),
+            "deleted_ids": deleted_ids,
+        }
+
+    def repair_project_names(self) -> dict:
+        """Collapse legacy absolute-path project keys to canonical basenames."""
+        rows = self.conn.execute(
+            "SELECT id, kind, project FROM memories WHERE project IS NOT NULL ORDER BY id"
+        ).fetchall()
+        repairs = []
+        with self.conn:
+            for memory_id, kind, project in rows:
+                normalized = _normalize_project(project)
+                if not normalized or normalized == project:
+                    continue
+                detail = json.dumps(
+                    {"from": project, "to": normalized},
+                    sort_keys=True,
+                )
+                self.conn.execute(
+                    "UPDATE memories SET project = ? WHERE id = ?",
+                    (normalized, memory_id),
+                )
+                self._log_op(
+                    "normalize_project",
+                    memory_id=memory_id,
+                    kind=kind,
+                    project=normalized,
+                    detail=detail,
+                )
+                repairs.append(
+                    {"memory_id": memory_id, "from": project, "to": normalized}
+                )
+        return {"repaired_count": len(repairs), "repairs": repairs}
+
     # Phase 3 extended lint helpers (debate 020 §queued, ARCHITECTURE.md
     # "Phase 3 — extended `engram lint` (expired-still-active, orphan
     # definition TBD)"). Always-on (no opt-in flag) because both checks
@@ -734,12 +907,10 @@ created_at: {mem.created_at.isoformat()}
     def _find_expired_still_active(self) -> list[dict]:
         """Rows past their expires_at deadline that still carry status='active'.
 
-        These should be hidden by every read path's expires_at filter
-        (audited in commit 0416823), and physically purged by the future
-        Phase 3 GC daemon (30-day grace per the Compost contract). Today
-        the GC daemon is unwritten, so any row this surfaces is one the
-        agent will never see in recall — confirming the filter works —
-        but that occupies storage until manual `forget` or GC ships.
+        These are hidden by every read path's expires_at filter (audited in
+        commit 0416823). `engram maintenance` physically collects only active
+        origin=compost rows after the 30-day contract grace period; this lint
+        category remains visible during that grace window.
 
         Schema CHECK can't enforce `expires_at > now()` because it only
         runs at INSERT time; rows naturally age past it. This is exactly
