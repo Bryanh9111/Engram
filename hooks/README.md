@@ -44,6 +44,8 @@ Add to `~/.claude/settings.json`:
 
 Replace `/absolute/path/to/Engram` with your actual clone path.
 
+Claude Code sends hook input as JSON on stdin. `user_prompt_submit.sh` extracts `.prompt`, preferring `jq` and using `python3` as a fallback; invalid JSON is treated as a plain-text prompt.
+
 ## Disable whisper mode
 
 Whisper mode injects ~150 tokens per prompt. If you prefer zero auto-inject:
