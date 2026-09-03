@@ -169,18 +169,18 @@ engram add/search/forget/unpin/candidates/stats/dashboard/lint/backup/gc/mainten
 - `decision` — 90 天
 - `constraint` / `guardrail` — 永不 age-flag（长期有效）
 
-## Codex Hooks（可选自动化）
+## Claude Code Hooks（可选自动化）
 
-`hooks/` 目录提供 opt-in Codex hook 集成：
+`hooks/` 目录提供 opt-in Claude Code hook 集成：
 - `session_start.sh` — 会话开始时注入 brain overview (~200 tokens)
 - `user_prompt_submit.sh` — 每个 prompt 前 whisper 相关记忆 (~150 tokens, `ENGRAM_WHISPER=0` 关闭)
 
-安装：在 `~/.Codex/settings.json` 的 hooks 配置里引用这些脚本。详见 `hooks/README.md`。
+安装：在 `~/.claude/settings.json` 的 hooks 配置里引用这些脚本。详见 `hooks/README.md`。
 
 ## Roadmap
 
 ```
-v3.1 — memory lint + Codex hooks
+v3.1 — memory lint + Claude Code hooks
 v3.2 — real token measurements + health summary mode (99% 减 token)
 v3.3 — Slice A: schema hardening + unpin API + scope 三值 enum (migration 001)
 v3.4 Slice B Phase 1 — Compost schema foundation (migration 002: insight kind + source_trace + expires_at + compost_insight_sources)
