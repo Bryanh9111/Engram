@@ -9,10 +9,11 @@ import re
 import sqlite3
 import sys
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import cast
 
-from engram.model import MemoryKind, MemoryStatus
+from engram.model import MemoryKind, MemoryObject
 from engram.store import MemoryStore
 
 
@@ -59,7 +60,7 @@ def _lint_summary(report: dict) -> dict:
     categories = {}
     for key in _LINT_CATEGORIES:
         rows = report.get(key) or []
-        entry = {"count": len(rows)}
+        entry: dict = {"count": len(rows)}
         by_kind = _counter_dict(r.get("kind") for r in rows if isinstance(r, dict))
         by_project = _counter_dict(
             (r.get("project") or "(none)") for r in rows
@@ -92,7 +93,7 @@ def _print_lint_summary(summary: dict) -> None:
 
 
 def _default_backup_path(db_path: str) -> Path:
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+    timestamp = datetime.now(UTC).strftime("%Y%m%d%H%M%S")
     return Path(db_path).expanduser().parent / "backups" / f"{timestamp}-engram.db"
 
 
@@ -197,7 +198,7 @@ def cmd_search(args, store: MemoryStore) -> None:
     if args.path_scope:
         kwargs["path_scope"] = args.path_scope
 
-    results = store.recall(args.query, limit=args.limit, **kwargs)
+    results = cast(list[MemoryObject], store.recall(args.query, limit=args.limit, **kwargs))
 
     if args.json:
         print(json.dumps([_memory_to_dict(m) for m in results], indent=2))
@@ -429,6 +430,7 @@ def cmd_export_stream(args, store: MemoryStore) -> None:
     entries = _handle_stream_for_compost(
         store,
         since=args.since,
+        after_id=args.after_id,
         kinds=args.kinds,
         project=args.project,
         include_compost=args.include_compost,
@@ -436,6 +438,11 @@ def cmd_export_stream(args, store: MemoryStore) -> None:
     )
     for entry in entries:
         print(json.dumps(entry))
+
+
+def cmd_export_states(args, store: MemoryStore) -> None:
+    """Read bounded lifecycle metadata without exposing memory contents."""
+    print(json.dumps(store.states_for_compost(args.ids)))
 
 
 def cmd_dashboard(args, store: MemoryStore) -> None:
@@ -636,6 +643,7 @@ def build_parser() -> argparse.ArgumentParser:
         "export-stream",
         help="Emit memories as JSONL for Compost ingest (contract shape)",
     )
+    p_export.add_argument("--after-id", help="Last memory ID at --since (lossless page cursor)")
     p_export.add_argument("--since", help="ISO-8601 timestamp; emit entries strictly after")
     p_export.add_argument(
         "--kinds", action="append",
@@ -652,7 +660,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="Cap output rows (default: 1000)",
     )
 
+    p_states = sub.add_parser("export-states", help="Read lifecycle state for Compost cached memory IDs")
+    p_states.add_argument("--ids", nargs="+", required=True)
+
+    p_indexes = sub.add_parser('indexes', help='Verify lexical index coverage and freshness')
+    p_indexes.add_argument('--rebuild', action='store_true', help='Atomically rebuild derived keyword and Chinese indexes')
     return parser
+
+
+def cmd_indexes(args, store: MemoryStore) -> None:
+    from engram.search_index import index_status, rebuild_indexes
+    report = rebuild_indexes(store.conn) if args.rebuild else index_status(store.conn)
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    if not report['ok']:
+        raise SystemExit(1)
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -671,8 +692,8 @@ def main(argv: list[str] | None = None) -> None:
          "dashboard": cmd_dashboard, "lint": cmd_lint,
          "backup": cmd_backup,
          "gc": cmd_gc, "maintenance": cmd_maintenance,
-         "misses": cmd_misses,
-         "export-stream": cmd_export_stream}[args.command](args, store)
+         "misses": cmd_misses, "indexes": cmd_indexes,
+         "export-stream": cmd_export_stream, "export-states": cmd_export_states}[args.command](args, store)
     finally:
         store.close()
 

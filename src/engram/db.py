@@ -183,6 +183,8 @@ def init_db(path: str) -> sqlite3.Connection:
     conn.execute("PRAGMA cache_size=-8000")
     conn.executescript(_SCHEMA)
     conn.commit()
+    from engram.search_index import ensure_indexes
+    ensure_indexes(conn)
     _chmod_private(db_path)
     _chmod_private(Path(f"{db_path}-wal"))
     _chmod_private(Path(f"{db_path}-shm"))

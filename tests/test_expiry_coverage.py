@@ -21,11 +21,11 @@ Paths intentionally NOT covered (they should NOT filter):
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from engram.model import MemoryKind, MemoryOrigin, MemoryScope
+from engram.model import MemoryKind
 from engram.proactive import ProactiveRecallEngine
 from engram.store import MemoryStore
 
@@ -42,8 +42,8 @@ def _insert_expired_compost(store: MemoryStore, memory_id: str, content: str = "
     which defaults to future expires_at. Only this bypass reflects the
     real-world scenario where time has passed since the insight was first
     stored."""
-    past = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
-    now = datetime.now(timezone.utc).isoformat()
+    past = (datetime.now(UTC) - timedelta(days=1)).isoformat()
+    now = datetime.now(UTC).isoformat()
     store.conn.execute(
         """INSERT INTO memories
            (id, content, summary, kind, origin, project, tags, status,
@@ -57,8 +57,8 @@ def _insert_expired_compost(store: MemoryStore, memory_id: str, content: str = "
 
 def _insert_expired_with_path_scope(store: MemoryStore, memory_id: str):
     """Expired entry with path_scope — proactive recall's shape."""
-    past = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
-    now = datetime.now(timezone.utc).isoformat()
+    past = (datetime.now(UTC) - timedelta(days=1)).isoformat()
+    now = datetime.now(UTC).isoformat()
     # path_scope requires constraint/guardrail/procedure kind to matter
     # in proactive; use constraint so we can test the path. constraint
     # CAN have expires_at legally (only compost has NOT-NULL requirement).
@@ -104,8 +104,8 @@ class TestConsolidateExcludesExpired:
     def test_archival_candidates_do_not_include_expired(self, store):
         # Candidate needs low strength AND old — insert one that satisfies
         # but is expired
-        past_create = (datetime.now(timezone.utc) - timedelta(days=200)).isoformat()
-        past_exp = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+        past_create = (datetime.now(UTC) - timedelta(days=200)).isoformat()
+        past_exp = (datetime.now(UTC) - timedelta(days=1)).isoformat()
         store.conn.execute(
             """INSERT INTO memories
                (id, content, summary, kind, origin, project, tags, status,
@@ -126,8 +126,8 @@ class TestCompileExcludesExpired:
         store.remember(content="live constraint", kind=MemoryKind.CONSTRAINT, project="p")
         # compile() is project-scoped; expired compost has project=None,
         # so insert an expired human entry in project 'p' instead
-        past = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
-        now = datetime.now(timezone.utc).isoformat()
+        past = (datetime.now(UTC) - timedelta(days=1)).isoformat()
+        now = datetime.now(UTC).isoformat()
         store.conn.execute(
             """INSERT INTO memories
                (id, content, summary, kind, origin, project, tags, status,
@@ -181,6 +181,7 @@ class TestProactiveExcludesExpired:
         is the relevant AI origin, and the filter must mention it by name
         so the next code reader can see the defense."""
         import inspect
+
         from engram import proactive
 
         src = inspect.getsource(proactive.ProactiveRecallEngine.on_file_open)

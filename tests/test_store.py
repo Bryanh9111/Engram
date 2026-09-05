@@ -1,5 +1,7 @@
 """Tests for MemoryStore: remember, recall, forget, consolidate."""
 
+from datetime import UTC
+
 import pytest
 
 from engram.model import MemoryKind, MemoryStatus
@@ -59,7 +61,7 @@ class TestRemember:
             project="payments",
         )
         # Very similar content should be detected as duplicate
-        result = store.remember(
+        store.remember(
             content="Money values must use integer cents end to end",
             kind=MemoryKind.CONSTRAINT,
             project="payments",
@@ -299,7 +301,7 @@ class TestForget:
     def test_forget_pinned_raises(self, populated_store):
         # The constraint memory is pinned
         results = populated_store.recall("integer cents")
-        pinned_mem = [r for r in results if r.pinned][0]
+        pinned_mem = next(r for r in results if r.pinned)
         with pytest.raises(ValueError, match="pinned"):
             populated_store.forget(pinned_mem.id)
 
@@ -307,7 +309,7 @@ class TestForget:
 class TestUnpin:
     def test_unpin_pinned_memory(self, populated_store):
         results = populated_store.recall("integer cents")
-        pinned_mem = [r for r in results if r.pinned][0]
+        pinned_mem = next(r for r in results if r.pinned)
 
         result = populated_store.unpin(pinned_mem.id)
 
@@ -319,7 +321,7 @@ class TestUnpin:
 
     def test_unpin_allows_forget_after(self, populated_store):
         results = populated_store.recall("integer cents")
-        pinned_mem = [r for r in results if r.pinned][0]
+        pinned_mem = next(r for r in results if r.pinned)
 
         populated_store.unpin(pinned_mem.id)
         populated_store.forget(pinned_mem.id)
@@ -344,7 +346,7 @@ class TestUnpin:
 
     def test_unpin_logs_operation(self, populated_store):
         results = populated_store.recall("integer cents")
-        pinned_mem = [r for r in results if r.pinned][0]
+        pinned_mem = next(r for r in results if r.pinned)
 
         populated_store.unpin(pinned_mem.id)
 
@@ -664,7 +666,8 @@ class TestExtendedLint:
         """Soft-deleted memory still has an id row — map_row pointing to it is
         NOT orphan (debate 020 §分歧 1 by-design retention for invalidation
         idempotency)."""
-        from datetime import datetime, timezone
+        from datetime import datetime
+
         from engram.model import MemoryOrigin, MemoryScope
         mem = store.remember(
             content="Compost insight that gets invalidated later",
@@ -672,7 +675,7 @@ class TestExtendedLint:
             origin=MemoryOrigin.COMPOST,
             scope=MemoryScope.GLOBAL,
             source_trace={"compost_fact_ids": ["f1"]},
-            expires_at=datetime(2099, 1, 1, tzinfo=timezone.utc),
+            expires_at=datetime(2099, 1, 1, tzinfo=UTC),
         )
         # invalidate the memory (status='obsolete'); map row stays
         store.conn.execute("UPDATE memories SET status='obsolete' WHERE id=?", (mem.id,))
@@ -726,9 +729,9 @@ class TestCompostGarbageCollection:
         )
 
     def test_gc_dry_run_reports_only_compost_past_grace(self, store):
-        from datetime import datetime, timedelta, timezone
+        from datetime import datetime, timedelta
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         eligible = self._remember_compost(
             store,
             "Expired Compost pointer eligible for collection",
@@ -762,13 +765,13 @@ class TestCompostGarbageCollection:
         assert store.conn.execute("SELECT 1 FROM memories WHERE id = ?", (human.id,)).fetchone()
 
     def test_gc_deletes_eligible_row_map_and_fts_with_audit(self, store):
-        from datetime import datetime, timedelta, timezone
+        from datetime import datetime, timedelta
 
         mem = self._remember_compost(
             store,
             "Expired Compost insight with searchable canary token",
             fact_id="fact-gc",
-            expires_at=datetime.now(timezone.utc) - timedelta(days=45),
+            expires_at=datetime.now(UTC) - timedelta(days=45),
         )
 
         result = store.gc_expired_compost(grace_days=30)
@@ -790,13 +793,13 @@ class TestCompostGarbageCollection:
         assert '"grace_days": 30' in audit[1]
 
     def test_gc_ignores_obsolete_compost_rows(self, store):
-        from datetime import datetime, timedelta, timezone
+        from datetime import datetime, timedelta
 
         mem = self._remember_compost(
             store,
             "Obsolete Compost insight retained for invalidation history",
             fact_id="fact-obsolete",
-            expires_at=datetime.now(timezone.utc) - timedelta(days=60),
+            expires_at=datetime.now(UTC) - timedelta(days=60),
         )
         store.conn.execute("UPDATE memories SET status = 'obsolete' WHERE id = ?", (mem.id,))
         store.conn.commit()

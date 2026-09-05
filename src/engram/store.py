@@ -3,14 +3,22 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import sqlite3
 from collections.abc import Iterator
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from typing import ClassVar
 
 from engram.db import init_db
-from engram.model import MemoryKind, MemoryObject, MemoryOrigin, MemoryScope, MemoryStatus
-
+from engram.model import (
+    MemoryKind,
+    MemoryObject,
+    MemoryOrigin,
+    MemoryScope,
+    MemoryStatus,
+)
+from engram.search_index import cjk_query
 
 _NOT_EXPIRED_SQL = (
     "(expires_at IS NULL OR julianday(expires_at) > julianday('now'))"
@@ -75,6 +83,15 @@ def _normalize_project(project: str | None) -> str | None:
 class MemoryStore:
     def __init__(self, db_path: str = "engram.db"):
         self.conn = init_db(db_path)
+        # SQLite julianday rounds away submillisecond precision. Stream cursors
+        # must preserve Python datetime precision and normalize time zones.
+        def epoch_us(value):
+            dt = datetime.fromisoformat(value)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=UTC)
+            delta = dt.astimezone(UTC) - datetime(1970, 1, 1, tzinfo=UTC)
+            return (delta.days * 86400 + delta.seconds) * 1_000_000 + delta.microseconds
+        self.conn.create_function("engram_epoch_us", 1, epoch_us, deterministic=True)
 
     def close(self):
         self.conn.close()
@@ -85,7 +102,7 @@ class MemoryStore:
         self.conn.execute(
             "INSERT INTO ops_log (op, memory_id, kind, project, ts, detail) VALUES (?,?,?,?,?,?)",
             (op, memory_id, kind, project,
-             datetime.now(timezone.utc).isoformat(), detail),
+             datetime.now(UTC).isoformat(), detail),
         )
 
     def remember(
@@ -162,6 +179,7 @@ class MemoryStore:
         if confidence == 1.0:
             mem.confidence = self._apply_kind_rules(mem)
 
+        assert mem.scope is not None  # MemoryObject assigns the kind-specific default.
         self.conn.execute(
             """INSERT INTO memories
                (id, content, summary, kind, origin, project, path_scope, tags,
@@ -310,7 +328,7 @@ class MemoryStore:
     def _strengthen(self, mem: MemoryObject) -> MemoryObject:
         """Increase strength of an existing memory on re-encounter."""
         new_strength = min(1.0, mem.strength + 0.1)
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         self.conn.execute(
             """UPDATE memories
                SET strength = ?, accessed_at = ?, access_count = access_count + 1
@@ -370,22 +388,31 @@ class MemoryStore:
             fts_query = _build_fts_query(query, operator="OR", min_len=2)
             if not fts_query:
                 return self._recall_recent(where_sql, params, limit, budget)
+            candidate_sql = "SELECT rowid, rank AS relevance FROM memories_fts WHERE memories_fts MATCH ?"
+            candidate_params = [fts_query]
+            han_query = cjk_query(query)
+            if han_query:
+                candidate_sql += " UNION ALL SELECT rowid, rank AS relevance FROM memories_cjk WHERE memories_cjk MATCH ?"
+                candidate_params.append(han_query)
+            candidate_sql += " UNION ALL SELECT rowid, -1e9 AS relevance FROM memories WHERE id = ?"
+            candidate_params.append(query.strip())
             sql = f"""
+                WITH candidates AS ({candidate_sql}),
+                matched AS (SELECT rowid, min(relevance) AS relevance FROM candidates GROUP BY rowid)
                 SELECT m.id, m.content, m.summary, m.kind, m.origin, m.project,
                        m.path_scope, m.tags, m.confidence, m.evidence_link,
                        m.status, m.strength, m.pinned, m.created_at,
                        m.accessed_at, m.last_verified, m.access_count, m.scope,
                        m.source_trace, m.expires_at
                 FROM memories m
-                JOIN memories_fts fts ON m.rowid = fts.rowid
-                WHERE memories_fts MATCH ?
-                  AND m.status != 'obsolete'
+                JOIN matched ON m.rowid = matched.rowid
+                WHERE m.status != 'obsolete'
                   AND (m.expires_at IS NULL OR julianday(m.expires_at) > julianday('now'))
                   {where_sql}
-                ORDER BY rank
+                ORDER BY matched.relevance, m.id
                 LIMIT ?
             """
-            all_params = [fts_query] + params + [limit]
+            all_params = candidate_params + params + [limit]
             try:
                 rows = self.conn.execute(sql, all_params).fetchall()
             except sqlite3.OperationalError:
@@ -551,7 +578,7 @@ class MemoryStore:
 
     def _touch(self, memories: list[MemoryObject]) -> None:
         """Update access metadata for recalled memories."""
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         for mem in memories:
             self.conn.execute(
                 """UPDATE memories
@@ -577,6 +604,48 @@ class MemoryStore:
         )
         self._log_op("forget", memory_id)
         self.conn.commit()
+
+    def resolve(self, memory_id: str) -> dict:
+        """Resolve an active/suspect claim, without resurrecting obsolete ones.
+
+        Explicit resolution may handle pinned claims; pinning protects against
+        forgetting, not the user's explicit decision that work is handled.
+        """
+        with self.conn:
+            row = self.conn.execute(
+                "SELECT status FROM memories WHERE id = ?", (memory_id,)
+            ).fetchone()
+            if row is None:
+                raise ValueError(f"Memory {memory_id} not found")
+            if row[0] == "obsolete":
+                raise ValueError(f"Cannot resolve obsolete memory {memory_id}")
+            if row[0] == "resolved":
+                return {"status": "already_resolved", "id": memory_id}
+            self.conn.execute("UPDATE memories SET status='resolved' WHERE id=?", (memory_id,))
+            self._log_op("resolve", memory_id, detail=f"previous_status={row[0]}")
+        return {"status": "resolved", "id": memory_id}
+
+    def states_for_compost(self, memory_ids: list[str]) -> list[dict]:
+        """Bounded read-only lifecycle projection, including missing IDs.
+
+        No claim content crosses this channel. A successful complete response
+        lets Compost invalidate cached facts without coupling its query path.
+        """
+        if len(memory_ids) > 1000:
+            raise ValueError("at most 1000 memory_ids per request")
+        if not memory_ids:
+            return []
+        ids = list(dict.fromkeys(memory_ids))
+        placeholders = ",".join("?" for _ in ids)
+        rows = self.conn.execute(
+            f"SELECT id, status, expires_at, ({_NOT_EXPIRED_SQL}) FROM memories WHERE id IN ({placeholders})",
+            ids,
+        ).fetchall()
+        states = {r[0]: {"memory_id": r[0], "status": r[1], "expires_at": r[2],
+                         "searchable": r[1] in ("active", "resolved") and bool(r[3])}
+                  for r in rows}
+        return [states.get(mid, {"memory_id": mid, "status": "missing", "expires_at": None,
+                                 "searchable": False}) for mid in ids]
 
     def unpin(self, memory_id: str) -> dict:
         """Unpin a memory, allowing it to be forgotten or age-flagged.
@@ -655,7 +724,7 @@ class MemoryStore:
         if not rows:
             return f"# {project}\n\nNo memories found."
 
-        lines = [f"# {project}", f"", f"*{len(rows)} memories*", ""]
+        lines = [f"# {project}", "", f"*{len(rows)} memories*", ""]
         current_kind = None
         for kind, content, summary, pinned, evidence in rows:
             if kind != current_kind:
@@ -963,7 +1032,7 @@ created_at: {mem.created_at.isoformat()}
 
     # Kind-specific TTL for staleness warning (not auto-deletion).
     # constraint/guardrail are long-lived and excluded.
-    _KIND_TTL_DAYS = {
+    _KIND_TTL_DAYS: ClassVar[dict[str, int]] = {
         "fact": 7,
         "procedure": 30,
         "decision": 90,
@@ -1000,7 +1069,7 @@ created_at: {mem.created_at.isoformat()}
         ).fetchall()
 
         for i, row in enumerate(rows):
-            old_id, old_content, old_summary, old_kind, old_project, old_ts = row
+            old_id, old_content, old_summary, _old_kind, old_project, old_ts = row
             normalized = self._normalize(old_content)
             words = list(normalized)[:8]
             if not words:
@@ -1021,7 +1090,8 @@ created_at: {mem.created_at.isoformat()}
                        ORDER BY rank LIMIT 3""",
                     (fts_query, old_project, old_id, old_ts),
                 ).fetchall()
-            except Exception:
+            except sqlite3.OperationalError as exc:
+                logging.getLogger(__name__).warning("Stale-claim search failed: %s", exc)
                 continue
 
             for match in matches:
@@ -1041,6 +1111,7 @@ created_at: {mem.created_at.isoformat()}
         self,
         *,
         since: datetime | None = None,
+        after_id: str | None = None,
         kinds: list[MemoryKind] | None = None,
         project: str | None = None,
         include_compost: bool = False,
@@ -1071,8 +1142,14 @@ created_at: {mem.created_at.isoformat()}
         params: list = []
 
         if since is not None:
-            where.append("julianday(created_at) > julianday(?)")
-            params.append(since.isoformat())
+            if after_id is None:
+                where.append("engram_epoch_us(created_at) > engram_epoch_us(?)")
+                params.append(since.isoformat())
+            else:
+                where.append("(engram_epoch_us(created_at), id) > (engram_epoch_us(?), ?)")
+                params.extend([since.isoformat(), after_id])
+        elif after_id is not None:
+            raise ValueError("after_id requires since")
 
         if kinds:
             placeholders = ",".join("?" * len(kinds))
@@ -1094,7 +1171,7 @@ created_at: {mem.created_at.isoformat()}
                    source_trace, expires_at
             FROM memories
             WHERE {' AND '.join(where)}
-            ORDER BY created_at ASC, id ASC
+            ORDER BY engram_epoch_us(created_at) ASC, id ASC
         """
         # Execute on a dedicated cursor so callers can interleave other
         # reads on self.conn without exhausting this stream prematurely.

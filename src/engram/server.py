@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import cast
 
 from mcp.server import FastMCP
 
@@ -79,17 +80,12 @@ def _handle_recall(
     limit: int = 10,
     budget: str = "normal",
 ) -> list[dict]:
-    kwargs = {}
-    if project:
-        kwargs["project"] = project
-    if kind:
-        kwargs["kind"] = MemoryKind(kind)
-    if path_scope:
-        kwargs["path_scope"] = path_scope
-
-    results = store.recall(query, limit=limit, budget=budget, **kwargs)
+    results = store.recall(
+        query, limit=limit, budget=budget, project=project,
+        kind=MemoryKind(kind) if kind else None, path_scope=path_scope,
+    )
     if budget == "tiny":
-        return results  # already dicts
+        return cast(list[dict], results)  # Tiny budget returns compact cards.
     return [_memory_to_dict(m) for m in results]
 
 
@@ -206,6 +202,7 @@ def _handle_stream_for_compost(
     project: str | None = None,
     include_compost: bool = False,
     limit: int = 1000,
+    after_id: str | None = None,
 ) -> list[dict]:
     """Stream entries in contract shape, bounded by `limit` for MCP transport."""
     from datetime import datetime
@@ -218,6 +215,7 @@ def _handle_stream_for_compost(
         return results
     for mem in store.stream_entries(
         since=since_dt,
+        after_id=after_id,
         kinds=kinds_enum,
         project=project,
         include_compost=include_compost,
@@ -328,6 +326,7 @@ def create_server() -> FastMCP:
         project: str | None = None,
         include_compost: bool = False,
         limit: int = 1000,
+        after_id: str | None = None,
     ) -> list[dict]:
         """Stream Engram memories for Compost ingestion.
 
@@ -343,7 +342,7 @@ def create_server() -> FastMCP:
         include_compost=True only for admin/debug.
         """
         return _handle_stream_for_compost(
-            store, since, kinds, project, include_compost, limit,
+            store, since, kinds, project, include_compost, limit, after_id,
         )
 
     @mcp.tool()
@@ -364,11 +363,12 @@ def create_server() -> FastMCP:
     @mcp.tool()
     def resolve(memory_id: str) -> dict:
         """Mark a memory as resolved (handled, done). Stops proactive recall but keeps searchable."""
-        store.conn.execute(
-            "UPDATE memories SET status = 'resolved' WHERE id = ?", (memory_id,)
-        )
-        store.conn.commit()
-        return {"status": "resolved", "id": memory_id}
+        return store.resolve(memory_id)
+
+    @mcp.tool()
+    def states_for_compost(memory_ids: list[str]) -> list[dict]:
+        """Read current lifecycle for up to 1000 IDs, including missing/expired claims."""
+        return store.states_for_compost(memory_ids)
 
     return mcp
 

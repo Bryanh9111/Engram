@@ -64,7 +64,7 @@ tests/
 - SQLite 是运行时真相源，Markdown 是编译/导出层
 - origin 分离防止 AI 编译产物污染人类判断
 
-## 永不做清单（GPT-5.4 约束，永久有效）
+## 永不做清单（项目约束，与执行模型无关）
 
 1. **NO silent auto-delete** — human/agent 记忆只能被显式 forget/resolve；唯一例外是契约化 `origin=compost AND status=active` TTL 指针，过期 30 天后由已备份、逐条审计的 maintenance GC 清理
 2. **NO blob memories / wiki dumps** — 保持 atomic claims，不存大段内容（content ≤ 4000 chars，schema 强制）

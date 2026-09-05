@@ -4,8 +4,6 @@ import json
 import subprocess
 import sys
 
-import pytest
-
 
 def run_cli(*args, env_db=None):
     """Run engram CLI and return result."""
@@ -14,7 +12,7 @@ def run_cli(*args, env_db=None):
     if env_db:
         import os
         env = {**os.environ, "ENGRAM_DB": env_db}
-    result = subprocess.run(cmd, capture_output=True, text=True, env=env)
+    result = subprocess.run(cmd, capture_output=True, text=True, env=env, check=False)
     return result
 
 
@@ -59,7 +57,7 @@ class TestCLI:
         # Add and capture ID
         add_result = run_cli("add", "Temporary fact", "--kind", "fact", env_db=db)
         # Parse ID from output
-        output = add_result.stdout.strip()
+        assert add_result.returncode == 0
         # Search to get results
         search_result = run_cli("search", "Temporary", "--json", env_db=db)
         memories = json.loads(search_result.stdout)

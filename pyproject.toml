@@ -23,3 +23,28 @@ packages = ["src/engram"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+
+[dependency-groups]
+dev = [
+    "coverage>=7.10",
+    "mypy>=2.3.1",
+    "ruff>=0.16.6",
+]
+
+[tool.ruff]
+target-version = "py311"
+
+[tool.mypy]
+files = ["src/engram"]
+check_untyped_defs = true
+ignore_missing_imports = true
+
+[tool.coverage.run]
+source = ["src/engram"]
+parallel = true
+patch = ["subprocess"]
+
+[tool.coverage.report]
+fail_under = 90
+precision = 2
+show_missing = true

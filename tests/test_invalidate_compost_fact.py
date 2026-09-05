@@ -13,11 +13,11 @@ Return shape:
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
-from engram.model import MemoryKind, MemoryOrigin, MemoryScope, MemoryStatus
+from engram.model import MemoryKind, MemoryOrigin, MemoryScope
 from engram.store import MemoryStore
 
 
@@ -35,7 +35,7 @@ def _insight(store: MemoryStore, content: str, fact_ids: list[str], **kw):
         origin=MemoryOrigin.COMPOST,
         scope=MemoryScope.GLOBAL,
         source_trace={"compost_fact_ids": fact_ids},
-        expires_at=datetime(2099, 1, 1, tzinfo=timezone.utc),
+        expires_at=datetime(2099, 1, 1, tzinfo=UTC),
         **kw,
     )
 

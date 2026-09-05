@@ -54,10 +54,9 @@ def _collect_imports(py_path: Path) -> set[str]:
             for alias in node.names:
                 imports.add(alias.name.split(".")[0])
                 imports.add(alias.name)
-        elif isinstance(node, ast.ImportFrom):
-            if node.module:
-                imports.add(node.module.split(".")[0])
-                imports.add(node.module)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imports.add(node.module.split(".")[0])
+            imports.add(node.module)
     return imports
 
 
@@ -87,7 +86,7 @@ class TestNoCompostImport:
         for forbidden in COMPOST_FORBIDDEN:
             matching = [
                 i for i in imports
-                if i == forbidden or i.startswith(forbidden + ".") or i.startswith(forbidden + "_")
+                if i == forbidden or i.startswith((forbidden + ".", forbidden + "_"))
             ]
             assert not matching, (
                 f"{module} imports Compost code {matching}. "
@@ -240,9 +239,9 @@ class TestSchemaInvariants:
     def test_memory_scores_excludes_expired(self, conn):
         # Expired compost insight should not appear in memory_scores view
         import datetime as dt
-        past = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=1)).isoformat()
-        future = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=1)).isoformat()
-        now = dt.datetime.now(dt.timezone.utc).isoformat()
+        past = (dt.datetime.now(dt.UTC) - dt.timedelta(days=1)).isoformat()
+        future = (dt.datetime.now(dt.UTC) + dt.timedelta(days=1)).isoformat()
+        now = dt.datetime.now(dt.UTC).isoformat()
 
         # Expired
         conn.execute(

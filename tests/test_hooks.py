@@ -2,15 +2,14 @@
 
 import json
 import os
-from pathlib import Path
 import shutil
 import subprocess
+from pathlib import Path
 
 import pytest
 
 from engram.model import MemoryKind
 from engram.store import MemoryStore
-
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 HOOK = REPO_ROOT / "hooks" / "user_prompt_submit.sh"

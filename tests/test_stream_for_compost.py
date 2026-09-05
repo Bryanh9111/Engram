@@ -14,13 +14,12 @@ The tool is a thin wrapper that:
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
 from engram.model import MemoryKind, MemoryOrigin, MemoryScope
 from engram.store import MemoryStore
-
 
 CONTRACT_KEYS = {
     "memory_id",
@@ -49,7 +48,7 @@ def _compost_insight(store: MemoryStore, content: str, fact_ids: list[str]):
         origin=MemoryOrigin.COMPOST,
         scope=MemoryScope.GLOBAL,
         source_trace={"compost_fact_ids": fact_ids},
-        expires_at=datetime(2099, 1, 1, tzinfo=timezone.utc),
+        expires_at=datetime(2099, 1, 1, tzinfo=UTC),
     )
 
 
@@ -113,7 +112,7 @@ class TestParameterForwarding:
     def test_since_parsed_from_iso_string(self, store):
         from engram.server import _handle_stream_for_compost
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         for i, ts in enumerate([now - timedelta(hours=2), now]):
             store.conn.execute(
                 """INSERT INTO memories
@@ -196,7 +195,7 @@ class TestLimitGuard:
                     f"m{i:02d}",
                     f"c{i}",
                     f"s{i}",
-                    (datetime.now(timezone.utc) - timedelta(seconds=100 - i)).isoformat(),
+                    (datetime.now(UTC) - timedelta(seconds=100 - i)).isoformat(),
                 ),
             )
         store.conn.commit()

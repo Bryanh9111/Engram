@@ -8,14 +8,13 @@ Per contract line 110: "CLI engram export-stream --kinds=... --since=...
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
 from engram.cli import main as cli_main
 from engram.model import MemoryKind, MemoryOrigin, MemoryScope
 from engram.store import MemoryStore
-
 
 CONTRACT_KEYS = {
     "memory_id",
@@ -71,7 +70,7 @@ class TestBasicShape:
         assert set(entry.keys()) == CONTRACT_KEYS
 
     def test_ordering_ascending_by_created_at(self, capsys, db_path, seed_store):
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         for i, ts in enumerate([now - timedelta(hours=3), now - timedelta(hours=1), now]):
             seed_store.conn.execute(
                 """INSERT INTO memories
@@ -102,7 +101,7 @@ class TestFilters:
         assert {e["kind"] for e in entries} == {"fact", "decision"}
 
     def test_since_flag(self, capsys, db_path, seed_store):
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         seed_store.conn.execute(
             """INSERT INTO memories
                (id, content, summary, kind, origin, project, tags, status,
@@ -141,7 +140,7 @@ class TestFeedbackLoopFlag:
             origin=MemoryOrigin.COMPOST,
             scope=MemoryScope.GLOBAL,
             source_trace={"compost_fact_ids": ["f1"]},
-            expires_at=datetime(2099, 1, 1, tzinfo=timezone.utc),
+            expires_at=datetime(2099, 1, 1, tzinfo=UTC),
         )
 
     def test_compost_excluded_by_default(self, capsys, db_path, seed_store):
@@ -170,7 +169,7 @@ class TestLimit:
                     f"m{i}",
                     f"c{i}",
                     f"s{i}",
-                    (datetime.now(timezone.utc) - timedelta(seconds=100 - i)).isoformat(),
+                    (datetime.now(UTC) - timedelta(seconds=100 - i)).isoformat(),
                 ),
             )
         seed_store.conn.commit()

@@ -12,7 +12,7 @@ Schema (from migration 002):
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -42,7 +42,7 @@ def _insight(store: MemoryStore, content: str, fact_ids: list[str], **extra):
         origin=MemoryOrigin.COMPOST,
         scope=MemoryScope.GLOBAL,
         source_trace={"compost_fact_ids": fact_ids, **extra.get("trace_extra", {})},
-        expires_at=datetime(2099, 1, 1, tzinfo=timezone.utc),
+        expires_at=datetime(2099, 1, 1, tzinfo=UTC),
     )
 
 
@@ -71,7 +71,7 @@ class TestAutoFill:
                 "note": "unrelated",
                 "version": 2,
             },
-            expires_at=datetime(2099, 1, 1, tzinfo=timezone.utc),
+            expires_at=datetime(2099, 1, 1, tzinfo=UTC),
         )
         assert _sources(store, mem.id) == {"f9"}
 

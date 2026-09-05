@@ -1,0 +1,16 @@
+name: quality
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --frozen --extra dev --extra mcp
+      - run: uv run ruff check src tests
+      - run: uv run mypy
+      - run: uv run coverage run -m pytest -q
+      - run: uv run coverage combine
+      - run: uv run coverage report

@@ -11,7 +11,7 @@ Contract (engram-integration-contract.md):
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -34,7 +34,7 @@ def _write_compost_insight(store: MemoryStore, content: str, **overrides) -> str
         origin=MemoryOrigin.COMPOST,
         scope=MemoryScope.GLOBAL,
         source_trace={"compost_fact_ids": ["f1"]},
-        expires_at=datetime(2099, 1, 1, tzinfo=timezone.utc),
+        expires_at=datetime(2099, 1, 1, tzinfo=UTC),
         **overrides,
     )
     return mem.id
@@ -62,7 +62,7 @@ class TestStreamEntriesBasics:
 
     def test_ordered_by_created_at_ascending(self, store):
         # Force distinct timestamps via direct inserts (remember uses _now())
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         for i, ts in enumerate(
             [now - timedelta(minutes=5), now - timedelta(minutes=2), now]
         ):
@@ -81,7 +81,7 @@ class TestStreamEntriesBasics:
 
 class TestStreamEntriesFilters:
     def test_since_filters_strictly_after(self, store):
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         for i, ts in enumerate([
             now - timedelta(hours=2),
             now - timedelta(hours=1),
@@ -193,7 +193,7 @@ class TestStreamEntriesStatusFilter:
     def test_excludes_expired_compost_even_with_include_flag(self, store):
         """Expired insights should not stream — expires_at is enforced at view
         level (memory_scores), and stream_entries respects the same TTL."""
-        past = datetime.now(timezone.utc) - timedelta(days=1)
+        past = datetime.now(UTC) - timedelta(days=1)
         # Raw insert to bypass store.remember (which would refuse in dedup
         # checks and whose expires_at must be future for typical cases).
         store.conn.execute(
@@ -232,7 +232,7 @@ class TestStreamEntriesLaziness:
                     f"m{i:03d}",
                     f"content {i}",
                     f"s{i}",
-                    (datetime.now(timezone.utc) - timedelta(seconds=200 - i)).isoformat(),
+                    (datetime.now(UTC) - timedelta(seconds=200 - i)).isoformat(),
                 ),
             )
         store.conn.commit()

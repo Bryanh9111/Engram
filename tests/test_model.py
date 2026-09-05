@@ -1,11 +1,8 @@
 """Tests for MemoryObject model and SQLite schema."""
 
-import sqlite3
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-import pytest
-
-from engram.model import MemoryObject, MemoryKind, MemoryOrigin, MemoryStatus
+from engram.model import MemoryKind, MemoryObject, MemoryOrigin, MemoryStatus
 
 
 class TestMemoryObject:
@@ -124,9 +121,9 @@ class TestMemoryObject:
         assert mem.summary == "Short summary"
 
     def test_timestamps_auto_set(self):
-        before = datetime.now(timezone.utc)
+        before = datetime.now(UTC)
         mem = MemoryObject(content="test", kind=MemoryKind.FACT)
-        after = datetime.now(timezone.utc)
+        after = datetime.now(UTC)
         assert before <= mem.created_at <= after
         assert mem.accessed_at is None
         assert mem.last_verified is None

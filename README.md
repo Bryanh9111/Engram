@@ -1,12 +1,12 @@
 # Engram — Persistent Memory System for AI Coding Agents
 
-[![Tests](https://img.shields.io/badge/tests-252_passing-brightgreen)](https://github.com/Bryanh9111/Engram)
+[![Quality](https://github.com/Bryanh9111/Engram/actions/workflows/quality.yml/badge.svg)](https://github.com/Bryanh9111/Engram/actions/workflows/quality.yml)
 [![Python](https://img.shields.io/badge/python-3.11+-blue)](https://www.python.org/)
-[![MCP](https://img.shields.io/badge/MCP-14_tools-purple)](https://modelcontextprotocol.io/)
+[![MCP](https://img.shields.io/badge/MCP-15_tools-purple)](https://modelcontextprotocol.io/)
 [![License](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
 [![Local First](https://img.shields.io/badge/local--first-SQLite-orange)](#)
 
-**Zero-LLM, local-first memory server for Claude Code and MCP-compatible AI agents.** Engram gives your AI agent persistent, cross-project memory with proactive recall — so it remembers constraints, decisions, and hard-won lessons across sessions. Built on SQLite + FTS5 with an MCP server that exposes 14 tools. No embeddings, no cloud, no API keys required.
+**Zero-LLM, local-first memory server for Claude Code and MCP-compatible AI agents.** Engram gives your AI agent persistent, cross-project memory with proactive recall — so it remembers constraints, decisions, and hard-won lessons across sessions. Built on SQLite + FTS5 with an MCP server that exposes 15 tools. No embeddings, no cloud, no API keys required.
 
 **Keywords:** MCP memory server, Claude Code memory, persistent AI agent memory, local LLM memory, proactive recall, SQLite agent memory, FTS5 knowledge base, MEMORY.md alternative
 
@@ -469,3 +469,32 @@ The name "engram" comes from neuroscience — a hypothetical means by which memo
 ## License
 
 MIT
+
+## Lifecycle safety and verification
+
+`resolve(memory_id)` is an audited, atomic transition from active/suspect to
+resolved. Repeated resolution is idempotent; missing or obsolete IDs fail.
+Explicit resolution may include pinned memories: pin protects against forgetting,
+while resolved memories remain searchable and stop proactive recall.
+
+Compost streaming accepts `(since, after_id)` for lossless timestamp-tied pages.
+`states_for_compost(memory_ids)` and `engram export-states --ids ...` expose
+bounded lifecycle metadata (including missing/obsolete/expired) without contents.
+The nine-field content stream remains compatible. See the sibling Compost
+boundary document for eventual cache invalidation and independent operation.
+
+```bash
+uv sync --frozen --extra dev --extra mcp
+uv run ruff check src tests
+uv run mypy
+uv run coverage erase
+uv run coverage run -m pytest -q
+uv run coverage combine
+uv run coverage report
+```
+
+Coverage includes CLI subprocess execution and must reach 90%; CI enforces the
+same gates. A non-editable `uv tool install` is a packaged snapshot: reinstall
+after source changes, then reconnect existing MCP clients to load the new code.
+
+See [search indexes](docs/search-indexes.md) for multilingual recall, index health, atomic rebuild and reproducible lexical evaluation.

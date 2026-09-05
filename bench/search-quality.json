@@ -1,0 +1,25 @@
+{
+  "description": "Small hand-authored lexical regression set; not a claim about production semantic recall.",
+  "documents": [
+    {"id":"money","content":"支付金额必须使用整数分保存，禁止浮点误差。","project":"payments","tags":["财务约束"]},
+    {"id":"search","content":"中文检索使用相邻双字索引，保留原始证据。","project":"compost","tags":["搜索架构"]},
+    {"id":"path","content":"The file src/search/index.ts contains query helpers.","project":"compost","tags":["paths"]},
+    {"id":"hyphen","content":"clientId-sensitive cancellation requires the correct client connection.","project":"broker","tags":[]},
+    {"id":"sqlite","content":"Use SQLite WAL for local durable storage.","project":"engram","tags":["storage"]},
+    {"id":"rare","content":"保留𠀀𠀁字符以验证扩展汉字范围。","project":"encoding","tags":[]},
+    {"id":"disjoint","content":"整数和数分出现在不同位置。","project":"scratch","tags":[]}
+  ],
+  "queries": [
+    {"query":"整数分","expected":["money"]},
+    {"query":"金额","expected":["money"]},
+    {"query":"检索","expected":["search"]},
+    {"query":"原始证据","expected":["search"]},
+    {"query":"搜索架构","expected":["search"]},
+    {"query":"src/search/index.ts","expected":["path"]},
+    {"query":"clientId-sensitive cancellation","expected":["hyphen"]},
+    {"query":"SQLite WAL","expected":["sqlite"]},
+    {"query":"𠀀𠀁","expected":["rare"]},
+    {"query":"整数分","project":"scratch","expected":[]},
+    {"query":"未出现词语","expected":[]}
+  ]
+}

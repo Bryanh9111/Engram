@@ -12,7 +12,7 @@ Schema (from migration 003 / db.py _SCHEMA):
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -45,7 +45,7 @@ def _compost_insight(
             "chunk_index": chunk_index,
             "compost_fact_ids": fact_ids or [],
         },
-        expires_at=datetime(2099, 1, 1, tzinfo=timezone.utc),
+        expires_at=datetime(2099, 1, 1, tzinfo=UTC),
     )
 
 
@@ -105,7 +105,7 @@ class TestFallbackPaths:
             origin=MemoryOrigin.COMPOST,
             scope=MemoryScope.GLOBAL,
             source_trace={"compost_fact_ids": ["f1"]},
-            expires_at=datetime(2099, 1, 1, tzinfo=timezone.utc),
+            expires_at=datetime(2099, 1, 1, tzinfo=UTC),
         )
         s2 = store.remember(
             content="checkout latency correlates with redis pool",
@@ -113,7 +113,7 @@ class TestFallbackPaths:
             origin=MemoryOrigin.COMPOST,
             scope=MemoryScope.GLOBAL,
             source_trace={"compost_fact_ids": ["f1"]},
-            expires_at=datetime(2099, 1, 1, tzinfo=timezone.utc),
+            expires_at=datetime(2099, 1, 1, tzinfo=UTC),
         )
         assert s1.id == s2.id
 
@@ -131,7 +131,7 @@ class TestFallbackPaths:
             origin=MemoryOrigin.COMPOST,
             scope=MemoryScope.GLOBAL,
             source_trace={"root_insight_id": "abc-123"},  # no chunk_index
-            expires_at=datetime(2099, 1, 1, tzinfo=timezone.utc),
+            expires_at=datetime(2099, 1, 1, tzinfo=UTC),
         )
         s2 = store.remember(
             content="partial trace insight content here",
@@ -139,7 +139,7 @@ class TestFallbackPaths:
             origin=MemoryOrigin.COMPOST,
             scope=MemoryScope.GLOBAL,
             source_trace={"root_insight_id": "abc-123"},
-            expires_at=datetime(2099, 1, 1, tzinfo=timezone.utc),
+            expires_at=datetime(2099, 1, 1, tzinfo=UTC),
         )
         # FTS5 content dedup catches it (same content)
         assert s1.id == s2.id
@@ -153,7 +153,7 @@ class TestUniqueIndexDefenseInDepth:
         import sqlite3
 
         rid = "blocked-by-index"
-        m1 = _compost_insight(store, "first", root_insight_id=rid, chunk_index=0)
+        _compost_insight(store, "first", root_insight_id=rid, chunk_index=0)
 
         # Try to bypass remember() and INSERT directly (simulates
         # buggy producer or schema migration import).
@@ -178,8 +178,8 @@ class TestUniqueIndexDefenseInDepth:
                     0,
                     "[]",
                     1.0,
-                    datetime.now(timezone.utc).isoformat(),
-                    datetime(2099, 1, 1, tzinfo=timezone.utc).isoformat(),
+                    datetime.now(UTC).isoformat(),
+                    datetime(2099, 1, 1, tzinfo=UTC).isoformat(),
                 ),
             )
             store.conn.commit()
