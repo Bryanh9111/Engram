@@ -81,8 +81,8 @@ How Engram compares to other memory solutions for AI agents:
 
 1. **Zero LLM calls for all core operations** — remember, recall, proactive, health, dashboard all run on pure SQL. No API keys, no token costs beyond the payload itself.
 2. **Path-scoped proactive recall** — unique to Engram. Opens a file → pushes matching guardrails before you even ask. Inspired by Anthropic's Auto-Dream pattern but triggered synchronously, not via background agent.
-3. **Origin separation** — human-written, agent-discovered, and AI-compiled memories are ranked differently. AI summaries never contaminate proactive push to prevent hallucination feedback loops.
-4. **Constant-cost retrieval at scale** — Measured: `recall()` costs the same 432 tokens at 300 memories or 30,000.
+3. **Origin separation** — every memory carries `human`, `agent`, or `compost` origin, and Compost-synthesized insights never enter proactive push, so AI output cannot feed back into the guardrails you get pushed. Ranking itself is origin-neutral: `effective_score` uses confidence, access, and recency only.
+4. **Bounded-cost retrieval** — `recall()` cost is set by `limit` and `budget`, not by store size. Measured ~432 tokens for a tiny-budget recall at 300 memories; the same shape serves a 3,700-memory store in daily use.
 5. **Fully explainable ranking** — `effective_score = confidence × access_boost × time_decay`. No vector similarities, no black-box rerankers.
 
 ## Architecture
@@ -496,5 +496,11 @@ uv run coverage report
 Coverage includes CLI subprocess execution and must reach 90%; CI enforces the
 same gates. A non-editable `uv tool install` is a packaged snapshot: reinstall
 after source changes, then reconnect existing MCP clients to load the new code.
+Keep the MCP extra when you do, or `engram-server` from that install stops
+importing:
+
+```bash
+uv tool install --reinstall --with "mcp[cli]>=1.0,<2" .
+```
 
 See [search indexes](docs/search-indexes.md) for multilingual recall, index health, atomic rebuild and reproducible lexical evaluation.

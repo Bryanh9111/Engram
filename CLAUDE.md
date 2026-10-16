@@ -9,16 +9,20 @@ src/engram/
   model.py      — MemoryObject, MemoryKind(6), MemoryOrigin(3), MemoryStatus(4), MemoryScope(3)
   db.py         — SQLite + FTS5 schema + ops_log + compost_insight_sources + compost_cache
   migrations/   — 001_slice_a_schema.sql, 002_slice_b_compost_integration.sql,
-                  003_compost_insight_idempotency.sql
+                  003_compost_insight_idempotency.sql, 004_search_indexes.sql
   store.py      — MemoryStore: remember/recall/forget/resolve/unpin/consolidate/health/
-                  export/stats/micro_index/compile/stream_entries/_map_insight_sources
+                  export/stats/micro_index/compile/stream_entries/states_for_compost/
+                  gc_expired_compost/recall_miss_report/_map_insight_sources
+  search_index.py — 中文双字 (CJK bigram) FTS 索引 memories_cjk + search_index_state 校验/原子重建
   proactive.py  — ProactiveRecallEngine: 主动召回 + suppress
-  cli.py        — CLI: add/search/forget/unpin/candidates/stats/dashboard/lint/export-stream
-  server.py     — MCP Server (FastMCP, 14 tools)
+  cli.py        — CLI (16 commands): add/search/forget/unpin/candidates/stats/dashboard/lint/
+                  backup/gc/maintenance/misses/export-stream/export-states/indexes
+  server.py     — MCP Server (FastMCP, 15 tools)
 tests/
-  test_model, test_store, test_proactive, test_cli, test_mcp,
-  test_architecture_invariants, test_api_surface_coverage,
-  test_stream_entries, test_compost_insight_sources,
+  test_model, test_store, test_proactive, test_cli, test_mcp, test_hooks,
+  test_architecture_invariants, test_api_surface_coverage, test_lifecycle_contract,
+  test_search_index, test_recall_miss_log, test_expiry_coverage,
+  test_stream_entries, test_compost_insight_sources, test_compost_insight_dedup,
   test_stream_for_compost, test_invalidate_compost_fact, test_cli_export_stream
 ```
 
@@ -26,8 +30,8 @@ tests/
 
 - Python 3.11+ / uv
 - SQLite + FTS5 (WAL mode), migrations in `src/engram/migrations/`
-- MCP protocol (FastMCP)
-- pytest (252 tests)
+- MCP protocol (FastMCP)。`mcp` SDK 钉 `>=1.0,<2`: 2.x 把 `FastMCP` 改名 `MCPServer`, 并把同步 handler 放到 worker thread 跑, 与 `db.py` 单个 `sqlite3.connect` (默认 check_same_thread) 冲突。升级 2.x 需要连接/并发方案 + stdio 集成测试, 另立议题, 不接 dependabot 的裸 bump (2026-10-16 关闭 #25)
+- pytest (305 tests)
 
 ## 开发规范
 
@@ -66,7 +70,7 @@ tests/
 
 ## 永不做清单（GPT-5.4 约束，永久有效）
 
-1. **NO silent auto-delete** — 记忆只能被显式 forget/resolve
+1. **NO silent auto-delete** — human/agent 记忆只能被显式 forget/resolve；唯一例外是契约化 `origin=compost AND status=active` 的 TTL 指针，过期 30 天后由先做 verified backup、逐条写 ops_log 的 `engram maintenance` / `engram gc` 物理清理
 2. **NO blob memories / wiki dumps** — 保持 atomic claims，不存大段内容（content ≤ 4000 chars，schema 强制）
 3. **NO opaque ranking** — 必须能解释为什么这条记忆浮现
 4. **NO background rewriting** — 不未经人类审核改写源记忆
@@ -107,8 +111,10 @@ memory content 一旦写入不可变更。`stream_for_compost` 的 `updated_at =
 
 - `active` — 正常，参与 proactive recall 和 recall
 - `resolved` — 已处理，不再 proactive 推送但仍可 recall 搜索
-- `suspect` — 可疑，需人工审核
-- `obsolete` — 软删除，不参与任何检索
+- `suspect` — 可疑，需人工审核；默认 recall 不返回，要看必须显式传 `status=suspect`
+- `obsolete` — 软删除，不参与任何检索（显式 `status=obsolete` 也不返回）
+
+recall 默认可见集 = `active` + `resolved`，与 `states_for_compost().searchable` 和 `memory_scores` 视图一致（`tests/test_lifecycle_contract.py` 强制）。recall 在索引层遇到 `sqlite3.OperationalError` 抛 `RecallIndexError`（提示跑 `engram indexes`），不再返回空列表：空结果只能表示"没有匹配的记忆"，不能掩盖索引损坏。
 
 ## 排序机制 (effective_score)
 
@@ -118,7 +124,7 @@ score = confidence × (1 + 0.1 × min(access, 20)) × (1 / (1 + 0.02 × days_sin
 pinned 记忆 score = 10.0（始终最高）
 ```
 
-## MCP Tools (14)
+## MCP Tools (15)
 
 ```bash
 uv run engram-server  # 启动 MCP server
@@ -143,28 +149,36 @@ uv run engram-server  # 启动 MCP server
 **Compost 双向通道 (v3.4 Slice B)**:
 - `stream_for_compost(since?, kinds?, project?, include_compost=False, limit=1000)` — 契约投影导出供 Compost 摄取；默认排除 origin=compost 防 feedback loop
 - `invalidate_compost_fact(fact_ids)` — Compost 端上游事实失效时软删对应 insight；忽略 pinned（Compost 是 insight 新鲜度权威）
+- `states_for_compost(memory_ids)` — 最多 1000 个 ID 的生命周期投影 `{memory_id, status, expires_at, searchable}`，不含 content；`searchable` 与 recall 默认可见集一致
 
-## CLI (11 commands)
+## CLI (16 commands)
 
 ```bash
-engram add/search/forget/unpin/candidates/stats/dashboard/lint/backup/export-stream
+engram add/search/forget/unpin/candidates/stats/dashboard/lint/backup/gc/maintenance/misses/export-stream/export-states/indexes
 ```
 
+- `search --no-log-miss` — 自动调用方（whisper hook）必带；零结果不写 `recall_miss_log`，否则 `engram misses` 全是整句 prompt 噪音
 - `dashboard` — 记忆脑全局状态（项目分布/kind分布/健康/近24h活动/热门记忆）
-- `lint` — 全面健康检查（缺证据+孤岛+stale claims+kind-specific TTL）；`--summary` 输出低 token 分桶计数
+- `lint` — 全面健康检查（缺证据+孤岛+stale claims+kind 未访问窗口+expired_still_active）；`--summary` 输出低 token 分桶计数
 - `backup` — 使用 SQLite backup API 创建在线备份并默认验证 quick_check/integrity_check
+- `gc` — 物理删除过期 30 天以上的 active compost 指针；非 `--dry-run` 一律先做 verified backup（默认 `<db-dir>/backups`，`--backup-dir` 可改），备份失败则不删
+- `maintenance` — backup + 按 `--retention` 裁旧备份 + 修复 project 名 + gc；launchd `dev.engram.maintenance` 每天 04:30 本地跑
+- `misses` — 零结果查询分类；窗口按 `last_seen` 取，行数上限 `--limit`（默认 100，按终身 hits 排序），`hits` 是终身计数不是窗口计数
+- `indexes` — 校验 memories_fts / memories_cjk 覆盖与新鲜度，`--rebuild` 原子重建
 - `unpin` — 单条解除 pinned（默认交互确认，`--yes` 脚本模式）
-- `export-stream` — Compost 批量摄取 JSONL 流，与 MCP `stream_for_compost` 同 handler
+- `export-stream` / `export-states` — Compost 批量摄取 JSONL 流 / 生命周期状态读取，与 MCP 同 handler
 - `project` 名称在写入和读取路径都会执行 `strip().lower()`；`Helios` 与 `helios` 是同一项目，不要用大小写区分命名空间
 
-## Kind-Specific Staleness TTL
+## Kind-Specific Staleness Window
 
-`engram lint` 按 kind 检查陈旧度（只警告，不自动删除）：
+`engram lint` 的 `kind_staleness` 是"未访问复查信号"：active 且未 pinned 的记忆，距最后访问（`accessed_at`，从未访问则 `created_at`）超过 kind 窗口就标出。它不是 `expires_at`，不表示事实已失效，也不自动删除；lint 同时报告分母 `kind_staleness_eligible`（每 kind 的 active 未 pinned 数）。
 
 - `fact` — 7 天
 - `procedure` — 30 天
 - `decision` — 90 天
 - `constraint` / `guardrail` — 永不 age-flag（长期有效）
+
+调阈值前先按项目抽样看被标记的记忆是不是真的过期；"访问过"不等于"验证过"，不要为了让数字好看就放宽窗口。
 
 ## Claude Code Hooks（可选自动化）
 
@@ -186,15 +200,15 @@ v3.4 Slice B Phase 2 S2 — 双向 Compost 通道 runtime (stream_for_compost / 
 v3.4 Slice B Phase 2 S3 (current) — Compost insight structural idempotency (migration 003; root_insight_id + chunk_index PUT semantics)
    ↓
 Phase 3 (按数据触发):
-  - recall/proactive 分层 (debate 019 Q5 F) — 触发: 生产 >10 条 origin=compost entry；当前 2 条，deferred
-  - GC daemon — 触发: 见到第一条 expired compost entry (30-day grace per contract)；当前 0 条 expired
+  - recall/proactive 分层 (debate 019 Q5 F) — 触发: 生产 >10 条 origin=compost entry；当前 0 条 (仅有的 2 条 2026-08-16 被 GC)，deferred
+  - GC daemon — 完成: `engram maintenance` (launchd 每日) 备份后按 30-day grace 物理删 (4f699e9)；2026-08-16 首次清理 2 条
   - engram lint 扩展 (compost-specific) — 完成
   - ARCHITECTURE.md origin 不变量文档化 — 完成 (0ee0580)
   - SQLite PRAGMA 审计 (debate 016 Codex I3) — 完成 (a2369cf)
-  - recall_miss_log writer (debate 016 Q4) — 完成 (passive collection, 离线 export 到 Compost 待 v5 trigger)
+  - recall_miss_log writer (debate 016 Q4) — 完成 (passive collection; whisper hook 走 `--no-log-miss` 不计入; 离线 export 到 Compost 待 v5 trigger)
    ↓
 v4 (trigger: 500 memories) — LLM compile with Planner→Worker→Critic
-  ⚠ 当前 941 memories 已穿透 trigger (2026-05-03 MCP stats), 但 Compost Slice B/v4 已承担部分"跨项目 synthesized insight" 职责, v4 scope 需重新评估
+  ⚠ 2026-10-16: 3717 memories / 2836 active, 早已穿透 trigger, 但 Compost Slice B/v4 已承担部分"跨项目 synthesized insight" 职责, v4 scope 需重新评估
    ↓
 v4.1 (trigger: 时间敏感 memories >10% 或 >30 条) — Temporal Expiry (A, deferred)
    ↓
