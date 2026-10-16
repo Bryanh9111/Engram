@@ -917,28 +917,40 @@ created_at: {mem.created_at.isoformat()}
         return result
 
     def gc_expired_compost(
-        self, *, grace_days: int = 30, dry_run: bool = False
+        self,
+        *,
+        grace_days: int = 30,
+        dry_run: bool = False,
+        only_ids: list[str] | None = None,
     ) -> dict:
         """Physically collect expired active Compost pointers after a grace period.
 
         This narrow TTL lifecycle never includes human/agent origins or
         non-active rows. Every physical deletion is recorded in ops_log before
         the row is removed, and SQLite triggers clean the FTS and source map.
+
+        ``only_ids`` binds deletion to a set previewed earlier (and therefore
+        present in the backup taken after that preview); rows that became
+        eligible later wait for the next run. ``None`` means every eligible row.
         """
         if grace_days < 0:
             raise ValueError("grace_days must be non-negative")
 
         def eligible_rows():
-            return self.conn.execute(
-                """SELECT id, kind, project, expires_at
-                     FROM memories
-                    WHERE origin = 'compost'
-                      AND status = 'active'
-                      AND expires_at IS NOT NULL
-                      AND julianday(expires_at) <= julianday('now', ?)
-                    ORDER BY expires_at ASC, id ASC""",
-                (f"-{grace_days} days",),
-            ).fetchall()
+            if only_ids is not None and not only_ids:
+                return []
+            sql = """SELECT id, kind, project, expires_at
+                       FROM memories
+                      WHERE origin = 'compost'
+                        AND status = 'active'
+                        AND expires_at IS NOT NULL
+                        AND julianday(expires_at) <= julianday('now', ?)"""
+            params: list = [f"-{grace_days} days"]
+            if only_ids is not None:
+                sql += f" AND id IN ({','.join('?' * len(only_ids))})"
+                params.extend(only_ids)
+            sql += " ORDER BY expires_at ASC, id ASC"
+            return self.conn.execute(sql, params).fetchall()
 
         rows = eligible_rows()
         eligible_ids = [row[0] for row in rows]

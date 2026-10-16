@@ -49,6 +49,20 @@ class TestMCPTools:
         assert len(result) == 1
         assert result[0]["project"] == "helios"
 
+    def test_recall_tool_status_filter_exposes_suspect_review(self, tmp_path):
+        from engram.server import _handle_recall, _handle_remember
+
+        store = MemoryStore(str(tmp_path / "test.db"))
+        mem = _handle_remember(store, content="Vendor quote may be outdated", kind="fact")
+        store.conn.execute("UPDATE memories SET status = 'suspect' WHERE id = ?", (mem["id"],))
+        store.conn.commit()
+
+        assert _handle_recall(store, query="vendor quote") == []
+        review = _handle_recall(store, query="vendor quote", status="suspect")
+        assert [r["id"] for r in review] == [mem["id"]]
+        assert review[0]["status"] == "suspect"
+        assert _handle_recall(store, query="vendor quote", status="obsolete") == []
+
     def test_forget_tool(self, tmp_path):
         from engram.server import _handle_forget, _handle_remember
 

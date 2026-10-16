@@ -8,7 +8,7 @@ from typing import cast
 
 from mcp.server import FastMCP
 
-from engram.model import MemoryKind, MemoryOrigin
+from engram.model import MemoryKind, MemoryOrigin, MemoryStatus
 from engram.proactive import ProactiveRecallEngine
 from engram.store import MemoryStore
 
@@ -79,10 +79,12 @@ def _handle_recall(
     path_scope: str | None = None,
     limit: int = 10,
     budget: str = "normal",
+    status: str | None = None,
 ) -> list[dict]:
     results = store.recall(
         query, limit=limit, budget=budget, project=project,
         kind=MemoryKind(kind) if kind else None, path_scope=path_scope,
+        status=MemoryStatus(status) if status else None,
     )
     if budget == "tiny":
         return cast(list[dict], results)  # Tiny budget returns compact cards.
@@ -269,9 +271,12 @@ def create_server() -> FastMCP:
         kind: str | None = None,
         limit: int = 10,
         budget: str = "normal",
+        status: str | None = None,
     ) -> list[dict]:
-        """Search memories ranked by effective_score. budget: tiny (compact cards ~50tok each), normal (full objects), deep (limit>=50, expanded results)."""
-        return _handle_recall(store, query, project, kind, limit=limit, budget=budget)
+        """Search memories ranked by effective_score. budget: tiny (compact cards ~50tok each), normal (full objects), deep (limit>=50, expanded results). status: default returns active + resolved; pass "suspect" to review suspect memories explicitly. Obsolete memories are never returned."""
+        return _handle_recall(
+            store, query, project, kind, limit=limit, budget=budget, status=status,
+        )
 
     @mcp.tool()
     def forget(memory_id: str) -> dict:

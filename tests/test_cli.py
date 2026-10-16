@@ -259,6 +259,27 @@ class TestCLI:
         assert loud.returncode == 0
         assert miss_rows() == 1
 
+    def test_search_status_flag_exposes_suspect_review(self, tmp_path):
+        import sqlite3
+
+        db = str(tmp_path / "test.db")
+        run_cli("add", "Vendor quote may be outdated", "--kind", "fact", "--project", "audit", env_db=db)
+        with sqlite3.connect(db) as conn:
+            conn.execute("UPDATE memories SET status = 'suspect'")
+
+        default = run_cli("search", "vendor quote", env_db=db)
+        assert default.returncode == 0
+        assert "No memories found." in default.stdout
+
+        review = run_cli("search", "vendor quote", "--status", "suspect", "--json", env_db=db)
+        assert review.returncode == 0
+        rows = json.loads(review.stdout)
+        assert len(rows) == 1
+        assert rows[0]["status"] == "suspect"
+
+        rejected = run_cli("search", "vendor quote", "--status", "obsolete", env_db=db)
+        assert rejected.returncode == 2
+
     def test_search_reports_index_failure_instead_of_empty_result(self, tmp_path):
         import sqlite3
 

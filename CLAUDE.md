@@ -31,7 +31,7 @@ tests/
 - Python 3.11+ / uv
 - SQLite + FTS5 (WAL mode), migrations in `src/engram/migrations/`
 - MCP protocol (FastMCP)。`mcp` SDK 钉 `>=1.0,<2`: 2.x 把 `FastMCP` 改名 `MCPServer`, 并把同步 handler 放到 worker thread 跑, 与 `db.py` 单个 `sqlite3.connect` (默认 check_same_thread) 冲突。升级 2.x 需要连接/并发方案 + stdio 集成测试, 另立议题, 不接 dependabot 的裸 bump (2026-10-16 关闭 #25)
-- pytest (307 tests)
+- pytest (311 tests)
 
 ## 开发规范
 
@@ -111,7 +111,7 @@ memory content 一旦写入不可变更。`stream_for_compost` 的 `updated_at =
 
 - `active` — 正常，参与 proactive recall 和 recall
 - `resolved` — 已处理，不再 proactive 推送但仍可 recall 搜索
-- `suspect` — 可疑，需人工审核；默认 recall 不返回，要看必须显式传 `status=suspect`
+- `suspect` — 可疑，需人工审核；默认 recall 不返回，复查要显式传 status：Python `recall(status=MemoryStatus.SUSPECT)`、CLI `engram search <q> --status suspect`、MCP `recall(query, status="suspect")`
 - `obsolete` — 软删除，不参与任何检索（显式 `status=obsolete` 也不返回）
 
 带 query 的 recall 默认可见集 = `active` + `resolved`，与 `states_for_compost().searchable` 和 `memory_scores` 视图一致（`tests/test_lifecycle_contract.py` 强制）。空查询 / 无可用 FTS token 的 recent 回退只列 `active`：它服务 session-start 的 kind 概览，不混入已处理项；要看 resolved 显式传 `status=resolved`。recall 在索引层遇到 `sqlite3.OperationalError` 抛 `RecallIndexError`（提示跑 `engram indexes`），不再返回空列表：空结果只能表示"没有匹配的记忆"，不能掩盖索引损坏。
@@ -161,7 +161,7 @@ engram add/search/forget/unpin/candidates/stats/dashboard/lint/backup/gc/mainten
 - `dashboard` — 记忆脑全局状态（项目分布/kind分布/健康/近24h活动/热门记忆）
 - `lint` — 全面健康检查（缺证据+孤岛+stale claims+kind 未访问窗口+expired_still_active）；`--summary` 输出低 token 分桶计数
 - `backup` — 使用 SQLite backup API 创建在线备份并默认验证 quick_check/integrity_check
-- `gc` — 物理删除过期 30 天以上的 active compost 指针；非 `--dry-run` 且有可删条目时先做 verified backup（默认 `<db-dir>/backups`，`--backup-dir` 可改），备份失败则不删；没有可删条目不落备份
+- `gc` — 物理删除过期 30 天以上的 active compost 指针；非 `--dry-run` 且有可删条目时先做 verified backup（默认 `<db-dir>/backups`，`--backup-dir` 可改），备份失败则不删；没有可删条目不落备份。删除范围绑定在备份前预览到的 ID 集合（`only_ids`），备份之后才出现的条目留给下一轮，保证每条被删的行都在那份备份里
 - `maintenance` — backup + 按 `--retention` 裁旧备份 + 修复 project 名 + gc；launchd `dev.engram.maintenance` 每天 04:30 本地跑
 - `misses` — 零结果查询分类；窗口按 `last_seen` 取，行数上限 `--limit`（默认 100，按终身 hits 排序），`hits` 是终身计数不是窗口计数
 - `indexes` — 校验 memories_fts / memories_cjk 覆盖与新鲜度，`--rebuild` 原子重建

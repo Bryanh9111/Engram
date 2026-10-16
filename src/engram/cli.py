@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
-from engram.model import MemoryKind, MemoryObject
+from engram.model import MemoryKind, MemoryObject, MemoryStatus
 from engram.store import MemoryStore, RecallIndexError
 
 
@@ -214,6 +214,8 @@ def cmd_search(args, store: MemoryStore) -> None:
         kwargs["kind"] = MemoryKind(args.kind)
     if args.path_scope:
         kwargs["path_scope"] = args.path_scope
+    if args.status:
+        kwargs["status"] = MemoryStatus(args.status)
 
     try:
         results = cast(
@@ -409,7 +411,12 @@ def cmd_gc(args, store: MemoryStore) -> None:
     if not args.dry_run:
         if result["eligible_count"]:
             backup = _verified_backup_or_exit(store, _backup_dir_for(args), args.db_path)
-            result = store.gc_expired_compost(grace_days=args.grace_days, dry_run=False)
+            # Delete only what the preview saw: every removed row is in that backup.
+            result = store.gc_expired_compost(
+                grace_days=args.grace_days,
+                dry_run=False,
+                only_ids=result["eligible_ids"],
+            )
             result["backup"] = backup
         else:
             result["dry_run"] = False
@@ -427,6 +434,8 @@ def cmd_gc(args, store: MemoryStore) -> None:
 
 def cmd_maintenance(args, store: MemoryStore) -> None:
     backup_dir = _backup_dir_for(args)
+    # Preview before the backup so the deletion set is fully inside the snapshot.
+    gc_preview = store.gc_expired_compost(grace_days=args.gc_grace_days, dry_run=True)
     backup = _verified_backup_or_exit(store, backup_dir, args.db_path)
     try:
         pruned = _prune_timestamped_backups(backup_dir, args.retention)
@@ -438,6 +447,7 @@ def cmd_maintenance(args, store: MemoryStore) -> None:
     gc_result = store.gc_expired_compost(
         grace_days=args.gc_grace_days,
         dry_run=args.dry_run_gc,
+        only_ids=gc_preview["eligible_ids"],
     )
     result = {
         "backup": backup,
@@ -593,6 +603,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_search.add_argument("--project")
     p_search.add_argument("--kind", choices=[k.value for k in MemoryKind])
     p_search.add_argument("--path-scope")
+    p_search.add_argument(
+        "--status",
+        choices=["active", "resolved", "suspect"],
+        help="Explicit lifecycle filter (default: active + resolved; use 'suspect' to review flagged memories). Obsolete is never searchable.",
+    )
     p_search.add_argument("--limit", type=int, default=10)
     p_search.add_argument("--json", action="store_true")
     p_search.add_argument(

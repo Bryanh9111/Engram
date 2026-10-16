@@ -271,11 +271,22 @@ class TestRecall:
         )
         store.resolve(resolved.id)
 
+        suspect = store.remember(
+            content="Vendor invoice total looks wrong, needs review",
+            kind=MemoryKind.FACT,
+            project="ops",
+        )
+        store.conn.execute("UPDATE memories SET status = 'suspect' WHERE id = ?", (suspect.id,))
+        store.conn.commit()
+
         assert {m.id for m in store.recall("", project="ops")} == {active.id}
         # "x" is below min_len=2, so no FTS token survives and the fallback runs.
         assert {m.id for m in store.recall("x", project="ops")} == {active.id}
         explicit = store.recall("", project="ops", status=MemoryStatus.RESOLVED)
         assert [m.id for m in explicit] == [resolved.id]
+        review = store.recall("x", project="ops", status=MemoryStatus.SUSPECT)
+        assert [m.id for m in review] == [suspect.id]
+        assert store.recall("x", project="ops", status=MemoryStatus.OBSOLETE) == []
 
     def test_recall_updates_access_metadata(self, populated_store):
         results = populated_store.recall("Redis")

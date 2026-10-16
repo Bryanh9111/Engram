@@ -144,3 +144,54 @@ def test_unpin_confirmation_preserves_then_releases_memory(store, monkeypatch, c
     assert store.conn.execute('SELECT pinned FROM memories WHERE id=?', (mem.id,)).fetchone()[0] == 0
     cmd_unpin(Namespace(id='missing', yes=False), store)
     assert 'not found' in capsys.readouterr().out
+
+
+def _expired_compost_pointer(store, content, fact_id):
+    from engram.model import MemoryOrigin, MemoryScope
+
+    return store.remember(
+        content,
+        MemoryKind.INSIGHT,
+        origin=MemoryOrigin.COMPOST,
+        scope=MemoryScope.GLOBAL,
+        source_trace={'compost_fact_ids': [fact_id]},
+        expires_at=datetime.now(UTC) - timedelta(days=40),
+    )
+
+
+def test_gc_only_ids_binds_deletion_to_the_previewed_set(store):
+    first = _expired_compost_pointer(store, 'Legacy Compost pointer about ledger exports', 'f1')
+    second = _expired_compost_pointer(store, 'Stale Compost insight about cache warming', 'f2')
+    preview = store.gc_expired_compost(grace_days=30, dry_run=True)
+    assert set(preview['eligible_ids']) == {first.id, second.id}
+
+    result = store.gc_expired_compost(grace_days=30, only_ids=[first.id])
+    assert result['deleted_ids'] == [first.id]
+    assert store.gc_expired_compost(grace_days=30, only_ids=[])['deleted_count'] == 0
+    remaining = store.conn.execute(
+        "SELECT id FROM memories WHERE origin='compost'"
+    ).fetchall()
+    assert remaining == [(second.id,)]
+
+
+def test_gc_cli_refuses_to_delete_when_backup_raises_sqlite_error(store, tmp_path, monkeypatch, capsys):
+    import sqlite3
+    from argparse import Namespace
+
+    from engram import cli
+
+    pointer = _expired_compost_pointer(store, 'Compost pointer behind a failing backup', 'f3')
+
+    def failing_backup(*_args, **_kwargs):
+        raise sqlite3.OperationalError('unable to open database file')
+
+    monkeypatch.setattr(cli, '_create_backup', failing_backup)
+    args = Namespace(
+        grace_days=30, dry_run=False, backup_dir=str(tmp_path / 'ro'), json=True,
+        db_path=str(tmp_path / 'engram.db'),
+    )
+    with pytest.raises(SystemExit) as exc:
+        cli.cmd_gc(args, store)
+    assert exc.value.code == 1
+    assert 'unable to open database file' in capsys.readouterr().err
+    assert store.conn.execute('SELECT status FROM memories WHERE id=?', (pointer.id,)).fetchone()[0] == 'active'

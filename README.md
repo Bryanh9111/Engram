@@ -23,7 +23,7 @@ You didn't ask. It just knew.
 
 Engram is an open-source **Model Context Protocol (MCP) server** that acts as a persistent memory brain for AI coding agents like Claude Code. It stores structured memories (constraints, decisions, procedures, facts, guardrails) in a local SQLite database and surfaces them at the right moment — either on-demand via `recall()` or proactively when you open a matching file.
 
-It exists because AI coding agents are smart but amnesic. Every new session starts from zero. The common fix — loading a `MEMORY.md` file into every prompt — wastes 3,000-5,000 tokens per session and grows linearly with your notes. Engram solves this with constant-cost retrieval: **~40 tokens for health checks, ~78 for cold-start index, ~432 for a typical search**, regardless of whether you have 300 or 30,000 memories.
+It exists because AI coding agents are smart but amnesic. Every new session starts from zero. The common fix — loading a `MEMORY.md` file into every prompt — wastes 3,000-5,000 tokens per session and grows linearly with your notes. Engram solves this with retrieval whose response size is set by `limit` and `budget`, not by how many memories you have: **~40 tokens for health checks, ~78 for cold-start index, ~432 for a typical search**, measured at 300 memories and unchanged in shape at 3,700 in daily use.
 
 ### When to use Engram
 
@@ -46,7 +46,7 @@ It exists because AI coding agents are smart but amnesic. Every new session star
 ```
               AI Agent (Claude Code / Gemma / etc.)
                     |
-            MCP Server (14 tools)
+            MCP Server (15 tools)
                     |
      .------.-------.-------.-------.
      |      |       |       |       |
@@ -81,8 +81,8 @@ How Engram compares to other memory solutions for AI agents:
 
 1. **Zero LLM calls for all core operations** — remember, recall, proactive, health, dashboard all run on pure SQL. No API keys, no token costs beyond the payload itself.
 2. **Path-scoped proactive recall** — unique to Engram. Opens a file → pushes matching guardrails before you even ask. Inspired by Anthropic's Auto-Dream pattern but triggered synchronously, not via background agent.
-3. **Origin separation** — every memory carries `human`, `agent`, or `compost` origin, and Compost-synthesized insights never enter proactive push, so AI output cannot feed back into the guardrails you get pushed. Ranking itself is origin-neutral: `effective_score` uses confidence, access, and recency only.
-4. **Bounded-cost retrieval** — `recall()` cost is set by `limit` and `budget`, not by store size. Measured ~432 tokens for a tiny-budget recall at 300 memories; the same shape serves a 3,700-memory store in daily use.
+3. **Origin separation** — every memory carries `human`, `agent`, or `compost` origin, and Compost-synthesized insights never enter proactive push, so AI output cannot feed back into the guardrails you get pushed. Ranking itself is origin-neutral: `effective_score` uses confidence, access, and recency, plus a fixed override for pinned memories; origin is never a ranking input.
+4. **Bounded response size** — what `recall()` returns is capped by `limit` and `budget`, not by store size. Measured ~432 tokens for a typical recall at 300 memories; the same shape serves a 3,700-memory store in daily use.
 5. **Fully explainable ranking** — `effective_score = confidence × access_boost × time_decay`. No vector similarities, no black-box rerankers.
 
 ## Architecture
@@ -219,7 +219,7 @@ If you see `✗ Failed to connect`, the server crashed on startup — run `uv ru
 
 ### Step 5: Restart Claude Code
 
-Fully quit and relaunch Claude Code. The Engram MCP server starts automatically on first connection. All 14 tools become available in every project.
+Fully quit and relaunch Claude Code. The Engram MCP server starts automatically on first connection. All 15 tools become available in every project.
 
 ### Step 6: Verify end-to-end
 
@@ -385,11 +385,11 @@ SQLite is the runtime source of truth. JSONL is the migration format. Markdown i
 
 ### What is an MCP memory server?
 
-An **MCP (Model Context Protocol) memory server** is a standardized way for AI agents like Claude Code to access persistent memory across sessions. MCP is Anthropic's open protocol for connecting LLMs to external tools and data sources. Engram implements an MCP server that exposes 14 memory operations (`remember`, `recall`, `proactive`, `forget`, `resolve`, `compile`, etc.) that any MCP-compatible AI agent can call.
+An **MCP (Model Context Protocol) memory server** is a standardized way for AI agents like Claude Code to access persistent memory across sessions. MCP is Anthropic's open protocol for connecting LLMs to external tools and data sources. Engram implements an MCP server that exposes 15 memory operations (`remember`, `recall`, `proactive`, `forget`, `resolve`, `compile`, etc.) that any MCP-compatible AI agent can call.
 
 ### How is Engram different from MEMORY.md?
 
-MEMORY.md is a flat text file loaded into every prompt. It wastes 3,000-5,000 tokens per session and grows linearly with your notes. Engram is a queryable database that returns only the memories relevant to your current task — typically 40-800 tokens. At 10,000 memories, MEMORY.md would be unusable; Engram costs the same tokens per retrieval as at 300 memories.
+MEMORY.md is a flat text file loaded into every prompt. It wastes 3,000-5,000 tokens per session and grows linearly with your notes. Engram is a queryable database that returns only the memories relevant to your current task — typically 40-800 tokens. MEMORY.md grows with every note you add; an Engram retrieval returns at most `limit` memories, so its size is independent of how many you have stored.
 
 ### Does Engram need an OpenAI or Anthropic API key?
 
@@ -417,7 +417,7 @@ Run `engram backup` for a verified SQLite online backup, or `engram maintenance`
 
 ### Is Engram production-ready?
 
-Engram v3.4 has 252 tests passing and has been running in production across 10 real projects for weeks. The core design has been validated through 5 rounds of structured multi-model debate and stress-tested against 16 reference projects (Karpathy's LLM Wiki, Anthropic Auto-Dream, Mem0, MemGPT, Zep, Letta, Ombre Brain, CatchMe, SocratiCode, Supermemory, and more). v3.4 adds a bidirectional channel to [Compost](https://github.com/Bryanh9111) for cross-project synthesis. That said, it's a personal tool by a solo developer — use at your own risk in commercial settings.
+Engram v3.4 has 311 tests passing and has been running in daily use across 37 projects since April 2026. The core design has been validated through 5 rounds of structured multi-model debate and stress-tested against 16 reference projects (Karpathy's LLM Wiki, Anthropic Auto-Dream, Mem0, MemGPT, Zep, Letta, Ombre Brain, CatchMe, SocratiCode, Supermemory, and more). v3.4 adds a bidirectional channel to [Compost](https://github.com/Bryanh9111) for cross-project synthesis. That said, it's a personal tool by a solo developer — use at your own risk in commercial settings.
 
 ### Can I use Engram for personal knowledge management (not coding)?
 
@@ -428,7 +428,7 @@ Engram's storage and retrieval layer is domain-agnostic, but the `proactive()` t
 - Python 3.11+ / [uv](https://github.com/astral-sh/uv)
 - SQLite + FTS5 (WAL mode) — zero external dependencies
 - [MCP](https://modelcontextprotocol.io/) protocol via FastMCP
-- 252 tests, ~2,500 lines of code
+- 311 tests, ~2,900 lines of code
 
 ## Roadmap
 
