@@ -59,6 +59,7 @@ def run_hook(tmp_path):
             check=False,
         )
 
+    _run.db_path = db_path
     return _run
 
 
@@ -87,6 +88,11 @@ def test_user_prompt_submit_stays_silent_when_json_prompt_has_no_match(run_hook)
 
     assert result.returncode == 0
     assert "<engram_whisper>" not in result.stdout
+    # Whisper probes are automatic; their misses must not pollute recall_miss_log.
+    import sqlite3
+
+    with sqlite3.connect(run_hook.db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM recall_miss_log").fetchone()[0] == 0
 
 
 def test_user_prompt_submit_accepts_plain_text_fallback(run_hook):

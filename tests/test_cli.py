@@ -176,6 +176,92 @@ class TestCLI:
         assert data["path"] == str(backup)
         assert backup.exists()
 
+    def _add_expired_compost_pointer(self, db):
+        return run_cli(
+            "add",
+            "Compost pointer ready for GC",
+            "--kind", "insight",
+            "--origin", "compost",
+            "--scope", "global",
+            "--source-trace", '{"compost_fact_ids":["fact-old"]}',
+            "--expires-at", "2020-01-01T00:00:00+00:00",
+            env_db=db,
+        )
+
+    def _compost_rows(self, db_path):
+        import sqlite3
+
+        with sqlite3.connect(db_path) as conn:
+            return conn.execute(
+                "SELECT COUNT(*) FROM memories WHERE origin = 'compost'"
+            ).fetchone()[0]
+
+    def test_gc_backs_up_before_physical_deletion(self, tmp_path):
+        db = str(tmp_path / "test.db")
+        backup_dir = tmp_path / "gc-backups"
+        assert self._add_expired_compost_pointer(db).returncode == 0
+
+        dry_run = run_cli("gc", "--dry-run", "--json", "--backup-dir", str(backup_dir), env_db=db)
+        assert dry_run.returncode == 0
+        assert "backup" not in json.loads(dry_run.stdout)
+        assert not backup_dir.exists()
+
+        result = run_cli("gc", "--json", "--backup-dir", str(backup_dir), env_db=db)
+        assert result.returncode == 0
+        data = json.loads(result.stdout)
+        assert data["deleted_count"] == 1
+        assert data["backup"]["verified"] is True
+        assert self._compost_rows(data["backup"]["path"]) == 1
+        assert self._compost_rows(db) == 0
+
+    def test_gc_refuses_to_delete_when_backup_fails(self, tmp_path):
+        db = str(tmp_path / "test.db")
+        blocker = tmp_path / "not-a-directory"
+        blocker.write_text("occupied")
+        assert self._add_expired_compost_pointer(db).returncode == 0
+
+        result = run_cli("gc", "--json", "--backup-dir", str(blocker), env_db=db)
+
+        assert result.returncode == 1
+        assert result.stdout == ""
+        assert self._compost_rows(db) == 1
+
+    def test_search_no_log_miss_skips_miss_log(self, tmp_path):
+        import sqlite3
+
+        db = str(tmp_path / "test.db")
+        run_cli("add", "Redis must be seeded before tests", "--kind", "procedure", env_db=db)
+
+        def miss_rows():
+            with sqlite3.connect(db) as conn:
+                return conn.execute("SELECT COUNT(*) FROM recall_miss_log").fetchone()[0]
+
+        quiet = run_cli("search", "ghost_whisper_probe", "--no-log-miss", env_db=db)
+        assert quiet.returncode == 0
+        assert "No memories found." in quiet.stdout
+        assert miss_rows() == 0
+
+        loud = run_cli("search", "ghost_whisper_probe", env_db=db)
+        assert loud.returncode == 0
+        assert miss_rows() == 1
+
+    def test_search_reports_index_failure_instead_of_empty_result(self, tmp_path):
+        import sqlite3
+
+        db = str(tmp_path / "test.db")
+        run_cli("add", "Redis must be seeded before tests", "--kind", "procedure", env_db=db)
+        # init_db recreates a missing FTS table, so simulate a broken index with a
+        # plain table of the same name: CREATE IF NOT EXISTS skips it, MATCH fails.
+        with sqlite3.connect(db) as conn:
+            conn.execute("DROP TABLE memories_fts")
+            conn.execute("CREATE TABLE memories_fts(content TEXT)")
+
+        result = run_cli("search", "Redis", env_db=db)
+
+        assert result.returncode == 1
+        assert "No memories found" not in result.stdout
+        assert "engram indexes" in result.stderr
+
     def test_gc_dry_run_and_maintenance_backup_first(self, tmp_path):
         import sqlite3
 

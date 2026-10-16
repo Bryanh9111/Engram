@@ -45,7 +45,9 @@ if [ -z "$QUERY" ]; then
 fi
 
 cd "$ENGRAM_DIR"
-RESULTS=$(uv run engram search "$QUERY" --limit 2 2>/dev/null || echo "")
+# --no-log-miss: this is an automatic probe, so a zero-result query is not
+# evidence of a retrieval gap and must not land in recall_miss_log.
+RESULTS=$(uv run engram search "$QUERY" --limit 2 --no-log-miss 2>/dev/null || echo "")
 
 if [ -n "$RESULTS" ] && [ "$RESULTS" != "No memories found." ]; then
     cat <<EOF

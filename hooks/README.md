@@ -46,6 +46,8 @@ Replace `/absolute/path/to/Engram` with your actual clone path.
 
 Claude Code sends hook input as JSON on stdin. `user_prompt_submit.sh` extracts `.prompt`, preferring `jq` and using `python3` as a fallback; invalid JSON is treated as a plain-text prompt.
 
+The whisper query runs `engram search --no-log-miss`. Hook probes are automatic, so a zero-result query is not recorded in `recall_miss_log`; `engram misses` only reflects explicit recalls. Any hook you write yourself should pass the same flag.
+
 ## Disable whisper mode
 
 Whisper mode injects ~150 tokens per prompt. If you prefer zero auto-inject:

@@ -5,7 +5,7 @@ from datetime import UTC
 import pytest
 
 from engram.model import MemoryKind, MemoryStatus
-from engram.store import MemoryStore
+from engram.store import MemoryStore, RecallIndexError
 
 
 @pytest.fixture
@@ -226,6 +226,32 @@ class TestRecall:
         results = populated_store.recall("", status=MemoryStatus.SUSPECT)
         assert len(results) == 0
 
+    def test_recall_default_excludes_suspect_but_explicit_status_finds_it(self, store):
+        mem = store.remember(
+            content="Vendor quote for the calibration rig may be outdated",
+            kind=MemoryKind.FACT,
+            project="audit",
+        )
+        store.conn.execute("UPDATE memories SET status = 'suspect' WHERE id = ?", (mem.id,))
+        store.conn.commit()
+
+        assert store.recall("vendor quote calibration") == []
+        explicit = store.recall("vendor quote calibration", status=MemoryStatus.SUSPECT)
+        assert [m.id for m in explicit] == [mem.id]
+
+        store.conn.execute("UPDATE memories SET status = 'obsolete' WHERE id = ?", (mem.id,))
+        store.conn.commit()
+        assert store.recall("vendor quote calibration", status=MemoryStatus.OBSOLETE) == []
+
+    def test_recall_default_includes_resolved(self, store):
+        mem = store.remember(
+            content="Cache warmer rollout note stays searchable after resolution",
+            kind=MemoryKind.DECISION,
+            project="audit",
+        )
+        store.resolve(mem.id)
+        assert [m.id for m in store.recall("cache warmer rollout")] == [mem.id]
+
     def test_recall_updates_access_metadata(self, populated_store):
         results = populated_store.recall("Redis")
         assert len(results) >= 1
@@ -270,6 +296,20 @@ class TestRecall:
         results = populated_store.recall("", path_scope="migrations/*")
         assert len(results) >= 1
         assert all(r.path_scope == "migrations/*" for r in results)
+
+
+class TestRecallIndexErrors:
+    def test_recall_raises_when_search_index_is_missing(self, store):
+        store.remember(content="Index failure fixture row", kind=MemoryKind.FACT)
+        store.conn.execute("DROP TABLE memories_fts")
+        store.conn.commit()
+
+        with pytest.raises(RecallIndexError, match="engram indexes"):
+            store.recall("index failure")
+
+        # A broken index is not a knowledge miss: nothing lands in the miss log.
+        count = store.conn.execute("SELECT COUNT(*) FROM recall_miss_log").fetchone()[0]
+        assert count == 0
 
 
 class TestForget:
@@ -571,6 +611,36 @@ class TestHealth:
         decision_stale = [s for s in report.get("kind_staleness", []) if s["kind"] == "decision"]
         assert len(decision_stale) == 0
 
+    def test_lint_kind_staleness_measures_inactivity_not_age(self, store):
+        """The window is since last access (created_at fallback), not row age."""
+        read_recently = store.remember(
+            content="Calibration offset is 3.2 units this week",
+            kind=MemoryKind.FACT,
+            project="test",
+        )
+        never_read = store.remember(
+            content="Deployment window closes Friday evening",
+            kind=MemoryKind.FACT,
+            project="test",
+        )
+        store.conn.execute("UPDATE memories SET created_at = datetime('now', '-30 days')")
+        store.conn.execute(
+            "UPDATE memories SET accessed_at = datetime('now', '-1 days') WHERE id = ?",
+            (read_recently.id,),
+        )
+        store.conn.commit()
+
+        report = store.health(check_stale=True)
+
+        flagged = {s["id"] for s in report["kind_staleness"]}
+        assert never_read.id in flagged
+        assert read_recently.id not in flagged
+        assert report["kind_staleness_eligible"] == {"fact": 2, "procedure": 0, "decision": 0}
+
+        summary = store.health(check_stale=True, summary=True)
+        assert summary["kind_staleness_count"] == 1
+        assert summary["kind_staleness_eligible"] == {"fact": 2, "procedure": 0, "decision": 0}
+
     def test_lint_constraint_and_guardrail_never_stale_by_age(self, store):
         """constraint/guardrail are long-lived and should not be age-flagged."""
         store.remember(
@@ -869,6 +939,9 @@ class TestRecallMissReport:
         assert candidate["active_project_memories"] == 1
         assert report["candidate_fts_gap_count"] == 1
         assert report["candidate_fts_gap_hits"] == 2
+        # Window selects rows by last_seen; hits are lifetime counters, capped rows.
+        assert report["row_limit"] == 100
+        assert report["hits_scope"] == "lifetime"
 
     def test_recall_miss_report_validates_arguments(self, store):
         with pytest.raises(ValueError, match="days"):

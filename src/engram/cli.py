@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import cast
 
 from engram.model import MemoryKind, MemoryObject
-from engram.store import MemoryStore
+from engram.store import MemoryStore, RecallIndexError
 
 
 def _get_db_path() -> str:
@@ -52,6 +52,11 @@ _LINT_CATEGORIES = (
 )
 
 
+# kind_staleness measures inactivity since last access, not expiry. Say so
+# wherever the count is printed, or 900 "stale facts" reads like a TTL breach.
+_KIND_STALENESS_LABEL = "unaccessed past kind window; not expiry"
+
+
 def _counter_dict(values) -> dict[str, int]:
     return dict(sorted(Counter(v for v in values if v).items()))
 
@@ -70,6 +75,8 @@ def _lint_summary(report: dict) -> dict:
             entry["by_kind"] = by_kind
         if by_project:
             entry["by_project"] = by_project
+        if key == "kind_staleness" and report.get("kind_staleness_eligible"):
+            entry["eligible"] = report["kind_staleness_eligible"]
         categories[key] = entry
     return {
         "total_issues": report["total_issues"],
@@ -81,7 +88,11 @@ def _print_lint_summary(summary: dict) -> None:
     print(f"Engram Lint Summary — {summary['total_issues']} issues")
     print("-" * 40)
     for key, entry in summary["categories"].items():
-        print(f"{key}: {entry['count']}")
+        note = f" ({_KIND_STALENESS_LABEL})" if key == "kind_staleness" else ""
+        print(f"{key}: {entry['count']}{note}")
+        if entry.get("eligible"):
+            eligible = ", ".join(f"{k}={v}" for k, v in entry["eligible"].items())
+            print(f"  eligible (active, unpinned): {eligible}")
         if entry.get("by_kind"):
             kinds = ", ".join(f"{k}={v}" for k, v in entry["by_kind"].items())
             print(f"  by_kind: {kinds}")
@@ -95,6 +106,12 @@ def _print_lint_summary(summary: dict) -> None:
 def _default_backup_path(db_path: str) -> Path:
     timestamp = datetime.now(UTC).strftime("%Y%m%d%H%M%S")
     return Path(db_path).expanduser().parent / "backups" / f"{timestamp}-engram.db"
+
+
+def _backup_dir_for(args) -> Path:
+    if args.backup_dir:
+        return Path(args.backup_dir).expanduser()
+    return Path(args.db_path).expanduser().parent / "backups"
 
 
 def _create_backup(
@@ -198,7 +215,19 @@ def cmd_search(args, store: MemoryStore) -> None:
     if args.path_scope:
         kwargs["path_scope"] = args.path_scope
 
-    results = cast(list[MemoryObject], store.recall(args.query, limit=args.limit, **kwargs))
+    try:
+        results = cast(
+            list[MemoryObject],
+            store.recall(
+                args.query,
+                limit=args.limit,
+                log_miss=not args.no_log_miss,
+                **kwargs,
+            ),
+        )
+    except RecallIndexError as exc:
+        print(str(exc), file=sys.stderr)
+        raise SystemExit(1) from exc
 
     if args.json:
         print(json.dumps([_memory_to_dict(m) for m in results], indent=2))
@@ -298,9 +327,17 @@ def cmd_lint(args, store: MemoryStore) -> None:
             print(f"    old: {r['old_content'][:60]}")
 
     if report.get("kind_staleness"):
-        print(f"\nKind staleness ({len(report['kind_staleness'])}):")
+        eligible = report.get("kind_staleness_eligible") or {}
+        denominator = ", ".join(f"{k}={v}" for k, v in eligible.items())
+        print(
+            f"\nKind staleness ({len(report['kind_staleness'])}; "
+            f"{_KIND_STALENESS_LABEL}; eligible active unpinned: {denominator}):"
+        )
         for r in report["kind_staleness"][:limit]:
-            print(f"  [{r['kind']}] {r['id']} (>{r['ttl_days']}d old): {r['summary'][:50]}")
+            print(
+                f"  [{r['kind']}] {r['id']} (>{r['ttl_days']}d unaccessed): "
+                f"{r['summary'][:50]}"
+            )
 
     if report.get("expired_still_active"):
         print(f"\nExpired still active ({len(report['expired_still_active'])}):")
@@ -354,14 +391,31 @@ def cmd_backup(args, store: MemoryStore) -> None:
         print(f"Backed up Engram DB to {dest}{suffix}")
 
 
+def _verified_backup_or_exit(store: MemoryStore, backup_dir: Path, db_path: str) -> dict:
+    """Physical deletion paths call this first; no verified backup, no delete."""
+    dest = backup_dir / _default_backup_path(db_path).name
+    try:
+        return _create_backup(store, dest, verify=True)
+    except (RuntimeError, ValueError, OSError) as exc:
+        print(str(exc), file=sys.stderr)
+        raise SystemExit(1) from exc
+
+
 def cmd_gc(args, store: MemoryStore) -> None:
+    backup = None
+    if not args.dry_run:
+        backup = _verified_backup_or_exit(store, _backup_dir_for(args), args.db_path)
     result = store.gc_expired_compost(
         grace_days=args.grace_days,
         dry_run=args.dry_run,
     )
+    if backup is not None:
+        result["backup"] = backup
     if args.json:
         print(json.dumps(result, indent=2))
         return
+    if backup is not None:
+        print(f"Pre-GC backup: {backup['path']} (verified)")
     action = "eligible" if args.dry_run else "deleted"
     print(
         f"Compost GC: {result[f'{action}_count']} {action} "
@@ -370,14 +424,11 @@ def cmd_gc(args, store: MemoryStore) -> None:
 
 
 def cmd_maintenance(args, store: MemoryStore) -> None:
-    backup_dir = Path(args.backup_dir).expanduser() if args.backup_dir else Path(
-        args.db_path
-    ).expanduser().parent / "backups"
-    dest = backup_dir / _default_backup_path(args.db_path).name
+    backup_dir = _backup_dir_for(args)
+    backup = _verified_backup_or_exit(store, backup_dir, args.db_path)
     try:
-        backup = _create_backup(store, dest, verify=True)
         pruned = _prune_timestamped_backups(backup_dir, args.retention)
-    except (FileExistsError, RuntimeError, ValueError) as exc:
+    except ValueError as exc:
         print(str(exc), file=sys.stderr)
         raise SystemExit(1) from exc
 
@@ -408,12 +459,13 @@ def cmd_misses(args, store: MemoryStore) -> None:
         print(json.dumps(report, indent=2))
         return
     print(
-        f"Recall misses ({report['window_days']}d): "
-        f"{report['unique_miss_count']} unique / {report['total_miss_hits']} hits"
+        f"Recall misses seen in the last {report['window_days']}d "
+        f"(top {report['row_limit']} query keys by lifetime hits): "
+        f"{report['unique_miss_count']} unique / {report['total_miss_hits']} lifetime hits"
     )
     print(
         f"Candidate FTS gaps: {report['candidate_fts_gap_count']} unique / "
-        f"{report['candidate_fts_gap_hits']} hits"
+        f"{report['candidate_fts_gap_hits']} lifetime hits"
     )
     for row in report["rows"]:
         project = row["project"] or "(all)"
@@ -541,6 +593,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_search.add_argument("--path-scope")
     p_search.add_argument("--limit", type=int, default=10)
     p_search.add_argument("--json", action="store_true")
+    p_search.add_argument(
+        "--no-log-miss",
+        action="store_true",
+        help="Do not record a zero-result query in recall_miss_log (for automatic callers such as whisper hooks)",
+    )
 
     # forget
     p_forget = sub.add_parser("forget", help="Forget a memory")
@@ -616,6 +673,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_gc.add_argument("--grace-days", type=int, default=30)
     p_gc.add_argument("--dry-run", action="store_true")
+    p_gc.add_argument(
+        "--backup-dir",
+        help="Directory for the verified pre-GC backup (default: <db-dir>/backups)",
+    )
     p_gc.add_argument("--json", action="store_true")
 
     # maintenance

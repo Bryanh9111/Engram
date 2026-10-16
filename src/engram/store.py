@@ -27,6 +27,14 @@ _NOT_EXPIRED_SQL = (
 _FTS_TOKEN_RE = re.compile(r"[\w]+", re.UNICODE)
 
 
+class RecallIndexError(RuntimeError):
+    """A recall query failed at the SQLite/FTS layer.
+
+    Raised instead of returning an empty result so a missing or broken search
+    index is never mistaken for "no matching memories".
+    """
+
+
 def _quote_fts_token(token: str) -> str:
     """Quote one FTS5 token so punctuation/user operators stay literal."""
     return f'"{token.replace(chr(34), chr(34) * 2)}"'
@@ -350,6 +358,7 @@ class MemoryStore:
         path_scope: str | None = None,
         limit: int = 10,
         budget: str = "normal",
+        log_miss: bool = True,
     ) -> list[MemoryObject] | list[dict]:
         """Retrieve memories matching query with filters and ranking.
 
@@ -357,6 +366,13 @@ class MemoryStore:
           tiny   ~300 tok  — compact cards (claim+kind+scope+trust)
           normal ~2-5K tok — full memory objects (default)
           deep   ~5-20K tok — expanded results, higher limit
+
+        Visibility: without an explicit ``status`` only active and resolved
+        memories are returned (the same set ``states_for_compost`` reports as
+        searchable). ``status`` can target suspect rows for review; obsolete
+        rows never surface. ``log_miss=False`` lets automatic callers (whisper
+        hooks) skip ``recall_miss_log`` so their probes are not counted as
+        retrieval gaps.
         """
         if budget == "deep":
             limit = max(limit, 50)
@@ -365,6 +381,7 @@ class MemoryStore:
 
         params: list = []
         where_clauses: list[str] = []
+        status_default_sql = "" if status else "AND m.status IN ('active', 'resolved')"
 
         if project:
             where_clauses.append("m.project = ?")
@@ -387,7 +404,10 @@ class MemoryStore:
             # FTS5 search with ranking
             fts_query = _build_fts_query(query, operator="OR", min_len=2)
             if not fts_query:
-                return self._recall_recent(where_sql, params, limit, budget)
+                return self._recall_recent(
+                where_sql, params, limit, budget,
+                status_default_sql="" if status else "AND m.status = 'active'",
+            )
             candidate_sql = "SELECT rowid, rank AS relevance FROM memories_fts WHERE memories_fts MATCH ?"
             candidate_params = [fts_query]
             han_query = cjk_query(query)
@@ -407,6 +427,7 @@ class MemoryStore:
                 FROM memories m
                 JOIN matched ON m.rowid = matched.rowid
                 WHERE m.status != 'obsolete'
+                  {status_default_sql}
                   AND (m.expires_at IS NULL OR julianday(m.expires_at) > julianday('now'))
                   {where_sql}
                 ORDER BY matched.relevance, m.id
@@ -415,15 +436,21 @@ class MemoryStore:
             all_params = candidate_params + params + [limit]
             try:
                 rows = self.conn.execute(sql, all_params).fetchall()
-            except sqlite3.OperationalError:
-                return []
+            except sqlite3.OperationalError as exc:
+                raise RecallIndexError(
+                    f"recall query failed: {exc}; "
+                    "run `engram indexes` to verify the search indexes"
+                ) from exc
         else:
-            return self._recall_recent(where_sql, params, limit, budget)
+            return self._recall_recent(
+                where_sql, params, limit, budget,
+                status_default_sql="" if status else "AND m.status = 'active'",
+            )
 
         results = [self._row_to_memory(row) for row in rows]
         results = self._rank_by_score(results)
         self._touch(results)
-        if not results:
+        if not results and log_miss:
             self._log_recall_miss(query, project)
         self._log_op("recall", detail=f"query={query[:50]} results={len(results)}")
         self.conn.commit()
@@ -464,6 +491,10 @@ class MemoryStore:
         has readable memories. Exact memory-id lookups and empty project
         namespaces are operational/query-shape issues, not evidence that a
         semantic retrieval tier is needed.
+
+        Rows are selected by ``last_seen`` inside the window and capped at
+        ``limit`` (highest lifetime hits first). ``hits`` are lifetime counters
+        for each query key, not counts inside the window.
         """
         if days < 1:
             raise ValueError("days must be at least 1")
@@ -474,7 +505,7 @@ class MemoryStore:
             row[0] or "": row[1]
             for row in self.conn.execute(
                 f"""SELECT COALESCE(project, ''), COUNT(*) FROM memories
-                    WHERE status != 'obsolete' AND {_NOT_EXPIRED_SQL}
+                    WHERE status IN ('active', 'resolved') AND {_NOT_EXPIRED_SQL}
                     GROUP BY COALESCE(project, '')"""
             ).fetchall()
         }
@@ -517,6 +548,8 @@ class MemoryStore:
         ]
         return {
             "window_days": days,
+            "row_limit": limit,
+            "hits_scope": "lifetime",
             "unique_miss_count": len(classified),
             "total_miss_hits": sum(row["hits"] for row in classified),
             "candidate_fts_gap_count": len(candidates),
@@ -537,9 +570,19 @@ class MemoryStore:
         }
 
     def _recall_recent(
-        self, where_sql: str, params: list, limit: int, budget: str = "normal"
+        self,
+        where_sql: str,
+        params: list,
+        limit: int,
+        budget: str = "normal",
+        *,
+        status_default_sql: str = "AND m.status = 'active'",
     ) -> list[MemoryObject] | list[dict]:
-        """Fallback: return recent active memories when no query."""
+        """Fallback: return recent active memories when no query.
+
+        ``status_default_sql`` is empty when the caller already put an explicit
+        status filter inside ``where_sql``; obsolete rows never surface.
+        """
         sql = f"""
             SELECT m.id, m.content, m.summary, m.kind, m.origin, m.project,
                    m.path_scope, m.tags, m.confidence, m.evidence_link,
@@ -548,7 +591,8 @@ class MemoryStore:
                    m.source_trace, m.expires_at
             FROM memories m
             LEFT JOIN memory_scores ms ON m.id = ms.id
-            WHERE m.status = 'active'
+            WHERE m.status != 'obsolete'
+              {status_default_sql}
               AND (m.expires_at IS NULL OR julianday(m.expires_at) > julianday('now'))
               {where_sql}
             ORDER BY COALESCE(ms.effective_score, 0.5) DESC
@@ -819,6 +863,7 @@ created_at: {mem.created_at.isoformat()}
 
         stale_claims = self._find_stale_claims() if check_stale else []
         kind_staleness = self._find_kind_staleness() if check_stale else []
+        kind_staleness_eligible = self._kind_staleness_eligible() if check_stale else {}
         # Phase 3 extended lint (debate 020 §queued + ARCHITECTURE.md):
         # always-on, cheap, no FTS5 self-join cost.
         expired_still_active = self._find_expired_still_active()
@@ -845,6 +890,7 @@ created_at: {mem.created_at.isoformat()}
             if check_stale:
                 result["stale_claims_count"] = len(stale_claims)
                 result["kind_staleness_count"] = len(kind_staleness)
+                result["kind_staleness_eligible"] = kind_staleness_eligible
             return result
 
         # Full mode for CLI: complete lists
@@ -864,6 +910,7 @@ created_at: {mem.created_at.isoformat()}
         if check_stale:
             result["stale_claims"] = stale_claims
             result["kind_staleness"] = kind_staleness
+            result["kind_staleness_eligible"] = kind_staleness_eligible
         return result
 
     def gc_expired_compost(
@@ -1030,16 +1077,31 @@ created_at: {mem.created_at.isoformat()}
             for r in rows
         ]
 
-    # Kind-specific TTL for staleness warning (not auto-deletion).
-    # constraint/guardrail are long-lived and excluded.
+    # Kind-specific review window for the staleness warning (not auto-deletion).
+    # Measured since last access (created_at when never accessed), so it is an
+    # inactivity signal, not an expiry check. constraint/guardrail are excluded.
     _KIND_TTL_DAYS: ClassVar[dict[str, int]] = {
         "fact": 7,
         "procedure": 30,
         "decision": 90,
     }
 
+    def _kind_staleness_eligible(self) -> dict[str, int]:
+        """Denominator for kind_staleness: active, unpinned rows per governed kind."""
+        counts = dict(
+            self.conn.execute(
+                """SELECT kind, COUNT(*) FROM memories
+                   WHERE status = 'active' AND pinned = 0
+                   GROUP BY kind"""
+            ).fetchall()
+        )
+        return {kind: counts.get(kind, 0) for kind in self._KIND_TTL_DAYS}
+
     def _find_kind_staleness(self) -> list[dict]:
-        """Flag memories past their kind-specific TTL. Warning only, not auto-delete."""
+        """Flag active, unpinned memories not accessed within their kind window.
+
+        Warning only, not auto-delete, and not the same thing as expires_at.
+        """
         stale: list[dict] = []
         for kind, ttl in self._KIND_TTL_DAYS.items():
             rows = self.conn.execute(

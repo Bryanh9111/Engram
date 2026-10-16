@@ -37,6 +37,13 @@ class TestRecallMissLog:
         assert row[1] == "nonexistent_unique_token_xyz_12345"
         assert row[2] == 1
 
+    def test_log_miss_false_skips_miss_logging(self, store):
+        """Automatic callers (whisper hooks) opt out; their misses are not evidence."""
+        assert store.recall("whisper_probe_token_777", log_miss=False) == []
+
+        count = store.conn.execute("SELECT COUNT(*) FROM recall_miss_log").fetchone()[0]
+        assert count == 0
+
     def test_repeated_miss_upserts_hit_count(self, store):
         """Same query hitting empty results twice -> one row, hits=2."""
         store.recall("ghost_query_abc")

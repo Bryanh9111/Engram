@@ -82,6 +82,31 @@ def test_state_projection_includes_revoked_expired_and_missing(store):
         store.states_for_compost(['x'] * 1001)
 
 
+def test_recall_visibility_matches_states_for_compost(store):
+    fixtures = {
+        'active': 'Visibility fixture: ledger export runs nightly',
+        'resolved': 'Visibility fixture: cache warmer retired in March',
+        'suspect': 'Visibility fixture: vendor quote may be outdated',
+        'obsolete': 'Visibility fixture: old staging URL decommissioned',
+    }
+    ids = {}
+    for status, content in fixtures.items():
+        mem = store.remember(content, MemoryKind.FACT, project='visibility')
+        store.conn.execute('UPDATE memories SET status=? WHERE id=?', (status, mem.id))
+        ids[status] = mem.id
+    store.conn.commit()
+
+    searchable = {r['memory_id']: r['searchable'] for r in store.states_for_compost(list(ids.values()))}
+    recalled = {m.id for m in store.recall('visibility fixture', project='visibility')}
+
+    assert searchable[ids['active']] is True
+    assert searchable[ids['resolved']] is True
+    assert searchable[ids['suspect']] is False
+    assert searchable[ids['obsolete']] is False
+    for status, mid in ids.items():
+        assert (mid in recalled) == searchable[mid], status
+
+
 def test_cli_state_export_and_tied_cursor(tmp_path):
     import json
 
