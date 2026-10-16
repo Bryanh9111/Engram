@@ -367,12 +367,15 @@ class MemoryStore:
           normal ~2-5K tok — full memory objects (default)
           deep   ~5-20K tok — expanded results, higher limit
 
-        Visibility: without an explicit ``status`` only active and resolved
-        memories are returned (the same set ``states_for_compost`` reports as
-        searchable). ``status`` can target suspect rows for review; obsolete
+        Visibility: without an explicit ``status`` the keyword path returns
+        active and resolved memories (the same set ``states_for_compost``
+        reports as searchable). The no-query fallback (empty query, or no
+        usable FTS token) lists recent *active* memories only: it feeds
+        session-start overviews, which must not resurface handled items.
+        ``status`` can target suspect or resolved rows explicitly; obsolete
         rows never surface. ``log_miss=False`` lets automatic callers (whisper
         hooks) skip ``recall_miss_log`` so their probes are not counted as
-        retrieval gaps.
+        retrieval gaps; an explicit obsolete probe is never a miss either.
         """
         if budget == "deep":
             limit = max(limit, 50)
@@ -405,9 +408,9 @@ class MemoryStore:
             fts_query = _build_fts_query(query, operator="OR", min_len=2)
             if not fts_query:
                 return self._recall_recent(
-                where_sql, params, limit, budget,
-                status_default_sql="" if status else "AND m.status = 'active'",
-            )
+                    where_sql, params, limit, budget,
+                    status_default_sql="" if status else "AND m.status = 'active'",
+                )
             candidate_sql = "SELECT rowid, rank AS relevance FROM memories_fts WHERE memories_fts MATCH ?"
             candidate_params = [fts_query]
             han_query = cjk_query(query)
@@ -450,7 +453,7 @@ class MemoryStore:
         results = [self._row_to_memory(row) for row in rows]
         results = self._rank_by_score(results)
         self._touch(results)
-        if not results and log_miss:
+        if not results and log_miss and status != MemoryStatus.OBSOLETE:
             self._log_recall_miss(query, project)
         self._log_op("recall", detail=f"query={query[:50]} results={len(results)}")
         self.conn.commit()

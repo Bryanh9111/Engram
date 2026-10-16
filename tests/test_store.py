@@ -242,6 +242,11 @@ class TestRecall:
         store.conn.execute("UPDATE memories SET status = 'obsolete' WHERE id = ?", (mem.id,))
         store.conn.commit()
         assert store.recall("vendor quote calibration", status=MemoryStatus.OBSOLETE) == []
+        # The default miss above was logged once; an explicit obsolete probe is not a miss.
+        hits = store.conn.execute(
+            "SELECT hits FROM recall_miss_log WHERE query_norm = 'vendor quote calibration'"
+        ).fetchone()[0]
+        assert hits == 1
 
     def test_recall_default_includes_resolved(self, store):
         mem = store.remember(
@@ -251,6 +256,26 @@ class TestRecall:
         )
         store.resolve(mem.id)
         assert [m.id for m in store.recall("cache warmer rollout")] == [mem.id]
+
+    def test_recall_fallback_lists_active_only_unless_status_given(self, store):
+        """Empty query and no-token query share the recent-active fallback."""
+        active = store.remember(
+            content="Ledger export runs nightly at two",
+            kind=MemoryKind.FACT,
+            project="ops",
+        )
+        resolved = store.remember(
+            content="Cache warmer retired in March",
+            kind=MemoryKind.DECISION,
+            project="ops",
+        )
+        store.resolve(resolved.id)
+
+        assert {m.id for m in store.recall("", project="ops")} == {active.id}
+        # "x" is below min_len=2, so no FTS token survives and the fallback runs.
+        assert {m.id for m in store.recall("x", project="ops")} == {active.id}
+        explicit = store.recall("", project="ops", status=MemoryStatus.RESOLVED)
+        assert [m.id for m in explicit] == [resolved.id]
 
     def test_recall_updates_access_metadata(self, populated_store):
         results = populated_store.recall("Redis")

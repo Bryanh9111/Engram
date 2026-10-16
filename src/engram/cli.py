@@ -396,21 +396,23 @@ def _verified_backup_or_exit(store: MemoryStore, backup_dir: Path, db_path: str)
     dest = backup_dir / _default_backup_path(db_path).name
     try:
         return _create_backup(store, dest, verify=True)
-    except (RuntimeError, ValueError, OSError) as exc:
+    except (RuntimeError, ValueError, OSError, sqlite3.Error) as exc:
         print(str(exc), file=sys.stderr)
         raise SystemExit(1) from exc
 
 
 def cmd_gc(args, store: MemoryStore) -> None:
+    # Preview first: a verified backup is required before deleting anything,
+    # but a run with nothing eligible should not pile up backup copies.
+    result = store.gc_expired_compost(grace_days=args.grace_days, dry_run=True)
     backup = None
     if not args.dry_run:
-        backup = _verified_backup_or_exit(store, _backup_dir_for(args), args.db_path)
-    result = store.gc_expired_compost(
-        grace_days=args.grace_days,
-        dry_run=args.dry_run,
-    )
-    if backup is not None:
-        result["backup"] = backup
+        if result["eligible_count"]:
+            backup = _verified_backup_or_exit(store, _backup_dir_for(args), args.db_path)
+            result = store.gc_expired_compost(grace_days=args.grace_days, dry_run=False)
+            result["backup"] = backup
+        else:
+            result["dry_run"] = False
     if args.json:
         print(json.dumps(result, indent=2))
         return

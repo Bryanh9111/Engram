@@ -214,6 +214,20 @@ class TestCLI:
         assert self._compost_rows(data["backup"]["path"]) == 1
         assert self._compost_rows(db) == 0
 
+    def test_gc_skips_backup_when_nothing_is_eligible(self, tmp_path):
+        db = str(tmp_path / "test.db")
+        backup_dir = tmp_path / "gc-backups"
+        run_cli("add", "Ordinary human memory", "--kind", "fact", env_db=db)
+
+        result = run_cli("gc", "--json", "--backup-dir", str(backup_dir), env_db=db)
+
+        assert result.returncode == 0
+        data = json.loads(result.stdout)
+        assert data["dry_run"] is False
+        assert data["deleted_count"] == 0
+        assert "backup" not in data
+        assert not backup_dir.exists()
+
     def test_gc_refuses_to_delete_when_backup_fails(self, tmp_path):
         db = str(tmp_path / "test.db")
         blocker = tmp_path / "not-a-directory"
