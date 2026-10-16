@@ -5,9 +5,16 @@ permissions:
 jobs:
   quality:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.14"]
+    name: quality (py${{ matrix.python }})
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ matrix.python }}
       - run: uv sync --frozen --extra dev --extra mcp
       - run: uv run ruff check src tests
       - run: uv run mypy
